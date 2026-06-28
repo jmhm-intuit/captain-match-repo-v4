@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Data Base Check · Captain Match Planner v4.0</title>
+  <meta name="theme-color" content="#1769ff">
+  <meta name="description" content="Read-only local database inspection page for Captain Match Planner.">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icons/icon-192.png">
+  <style>
+    :root { --bg:#f7fbff; --ink:#10213f; --muted:#667085; --blue:#1769ff; --line:#d8e3f2; --paper:#fff; --soft:#edf4ff; --red:#b91c1c; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:linear-gradient(180deg,#f8fbff,#eef6ff); color:var(--ink); }
+    .shell { max-width: 1280px; margin:0 auto; padding: 22px; }
+    header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:18px; flex-wrap:wrap; }
+    h1 { margin:0; font-size: clamp(26px,4vw,42px); letter-spacing:-1px; }
+    p { margin:6px 0 0; color:var(--muted); font-weight:700; }
+    a, button { font:inherit; }
+    .btn { border:0; border-radius:14px; padding:10px 13px; font-weight:950; color:#fff; background:linear-gradient(135deg,#1769ff,#0b3f9c); text-decoration:none; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }
+    .btn.secondary { background:#fff; color:var(--ink); border:1px solid var(--line); }
+    .layout { display:grid; grid-template-columns: 280px minmax(0,1fr); gap:16px; }
+    .card { background:rgba(255,255,255,.96); border:1px solid var(--line); border-radius:22px; padding:16px; box-shadow:0 12px 32px rgba(16,33,63,.08); }
+    .status { display:flex; gap:8px; align-items:center; flex-wrap:wrap; color:var(--muted); font-weight:800; font-size:13px; }
+    .pill { display:inline-flex; gap:6px; align-items:center; border:1px solid var(--line); border-radius:999px; padding:6px 10px; background:#fff; color:#41516f; font-weight:950; font-size:12px; }
+    .tables { display:grid; gap:8px; }
+    .table-btn { width:100%; border:1px solid var(--line); background:#fff; border-radius:16px; padding:11px 12px; display:flex; justify-content:space-between; gap:10px; cursor:pointer; font-weight:900; color:var(--ink); }
+    .table-btn.active { border-color:#1769ff; background:#eaf3ff; color:#0b4ab8; }
+    .toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+    input { border:1px solid var(--line); border-radius:14px; padding:10px 12px; min-width:260px; }
+    .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:18px; background:#fff; max-height: 66vh; }
+    table { border-collapse:collapse; width:100%; min-width:760px; }
+    th, td { border-bottom:1px solid #edf2f7; padding:9px 10px; text-align:left; vertical-align:top; font-size:13px; }
+    th { position:sticky; top:0; background:#f2f7ff; color:#41516f; text-transform:uppercase; letter-spacing:.04em; font-size:11px; z-index:1; }
+    td code { white-space:nowrap; font-size:12px; color:#0b4ab8; }
+    .json-cell { max-width: 360px; white-space: nowrap; overflow:hidden; text-overflow:ellipsis; color:#667085; }
+    details { max-width: 460px; }
+    summary { cursor:pointer; font-weight:900; color:#0b4ab8; }
+    pre { white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow:auto; background:#0f172a; color:#e2e8f0; border-radius:14px; padding:12px; font-size:12px; }
+    .empty { padding:28px; color:var(--muted); text-align:center; font-weight:800; }
+    .error { background:#fff1f2; border-color:#fecdd3; color:var(--red); }
+    @media (max-width: 840px) { .layout { grid-template-columns:1fr; } input { min-width:0; width:100%; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <h1>Data Base Check</h1>
+        <p>Read-only view of Captain Match Planner local IndexedDB data.</p>
+      </div>
+      <div class="status">
+        <a class="btn secondary" href="index.html">Back to app</a>
+        <button class="btn" id="refreshBtn">Refresh</button>
+      </div>
+    </header>
+    <div id="status" class="card status">Opening local database...</div>
+    <div class="layout" style="margin-top:16px">
+      <aside class="card">
+        <h2 style="margin:0 0 12px">Tables</h2>
+        <div id="tables" class="tables"></div>
+      </aside>
+      <main class="card">
+        <div class="toolbar">
+          <div>
+            <h2 id="tableTitle" style="margin:0">Select a table</h2>
+            <p id="tableSubtitle">Rows will appear here.</p>
+          </div>
+          <input id="filter" placeholder="Filter visible rows...">
+        </div>
+        <div id="content" class="table-wrap"><div class="empty">No table selected.</div></div>
+      </main>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var DB_NAME = "captain_match_planner_local_db";
+      var DB_VERSION = 3;
+      var preferredOrder = ["meta", "globalPlayers", "tournaments", "tournamentPlayers", "matches", "matchPlayers", "customAvatars", "playerAliases", "matchLineups", "lineupAssignments", "substitutionWindows", "substitutionChanges"];
+      var db = null;
+      var cache = {};
+      var activeStore = null;
+
+      function $(id) { return document.getElementById(id); }
+      function escapeHtml(v) { return String(v == null ? "" : v).replace(/[&<>\"']/g, function (m) { return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"})[m]; }); }
+      function openDb() {
+        return new Promise(function (resolve, reject) {
+          if (!window.indexedDB) return reject(new Error("IndexedDB is not available in this browser."));
+          var request = indexedDB.open(DB_NAME, DB_VERSION);
+          request.onupgradeneeded = function (event) {
+            var nextDb = event.target.result;
+            preferredOrder.forEach(function (name) {
+              if (name === "meta") return;
+              if (!nextDb.objectStoreNames.contains(name)) nextDb.createObjectStore(name, { keyPath: "id" });
+            });
+            if (!nextDb.objectStoreNames.contains("meta")) nextDb.createObjectStore("meta", { keyPath: "key" });
+          };
+          request.onsuccess = function (event) { resolve(event.target.result); };
+          request.onerror = function () { reject(request.error || new Error("Could not open IndexedDB.")); };
+        });
+      }
+      function getAll(storeName) {
+        return new Promise(function (resolve, reject) {
+          var tx = db.transaction(storeName, "readonly");
+          var store = tx.objectStore(storeName);
+          var req = store.getAll ? store.getAll() : null;
+          if (req) {
+            req.onsuccess = function () { resolve(req.result || []); };
+            req.onerror = function () { reject(req.error); };
+            return;
+          }
+          var rows = [];
+          var cur = store.openCursor();
+          cur.onsuccess = function (event) { var c = event.target.result; if (!c) return resolve(rows); rows.push(c.value); c.continue(); };
+          cur.onerror = function () { reject(cur.error); };
+        });
+      }
+      function valuePreview(value) {
+        if (value == null) return "";
+        if (typeof value === "object") return JSON.stringify(value);
+        return String(value);
+      }
+      function columnsFor(rows) {
+        var keys = [];
+        rows.slice(0, 50).forEach(function (row) {
+          Object.keys(row || {}).forEach(function (k) { if (keys.indexOf(k) < 0) keys.push(k); });
+        });
+        return keys;
+      }
+      function renderTables() {
+        var names = Object.keys(cache).sort(function (a, b) { return preferredOrder.indexOf(a) - preferredOrder.indexOf(b); });
+        $("tables").innerHTML = names.map(function (name) {
+          return '<button class="table-btn ' + (name === activeStore ? 'active' : '') + '" data-store="' + escapeHtml(name) + '"><span>' + escapeHtml(name) + '</span><strong>' + (cache[name] || []).length + '</strong></button>';
+        }).join("");
+        Array.prototype.forEach.call(document.querySelectorAll(".table-btn"), function (btn) {
+          btn.onclick = function () { activeStore = btn.getAttribute("data-store"); renderTables(); renderContent(); };
+        });
+      }
+      function renderContent() {
+        if (!activeStore) { $("content").innerHTML = '<div class="empty">No table selected.</div>'; return; }
+        var rows = (cache[activeStore] || []).slice();
+        var query = ($("filter").value || "").toLowerCase().trim();
+        if (query) rows = rows.filter(function (row) { return JSON.stringify(row).toLowerCase().indexOf(query) >= 0; });
+        $("tableTitle").textContent = activeStore;
+        $("tableSubtitle").textContent = rows.length + " visible rows / " + (cache[activeStore] || []).length + " total rows";
+        if (!rows.length) { $("content").innerHTML = '<div class="empty">No rows found.</div>'; return; }
+        var columns = columnsFor(rows);
+        var html = '<table><thead><tr>' + columns.map(function (c) { return '<th>' + escapeHtml(c) + '</th>'; }).join('') + '<th>JSON</th></tr></thead><tbody>';
+        html += rows.map(function (row) {
+          return '<tr>' + columns.map(function (c) {
+            var v = row[c];
+            if (typeof v === "object" && v !== null) return '<td class="json-cell">' + escapeHtml(JSON.stringify(v)) + '</td>';
+            if (c === "id" || /Id$/.test(c) || c === "key") return '<td><code>' + escapeHtml(v) + '</code></td>';
+            var text = valuePreview(v);
+            if (/^data:image\//.test(text)) text = text.slice(0, 48) + "...";
+            return '<td>' + escapeHtml(text) + '</td>';
+          }).join('') + '<td><details><summary>View</summary><pre>' + escapeHtml(JSON.stringify(row, null, 2)) + '</pre></details></td></tr>';
+        }).join('');
+        html += '</tbody></table>';
+        $("content").innerHTML = html;
+      }
+      function load() {
+        $("status").className = "card status";
+        $("status").textContent = "Opening local database...";
+        openDb().then(function (opened) {
+          db = opened;
+          var stores = Array.prototype.slice.call(db.objectStoreNames);
+          stores.sort(function (a, b) { return preferredOrder.indexOf(a) - preferredOrder.indexOf(b); });
+          return Promise.all(stores.map(function (name) { return getAll(name).then(function (rows) { cache[name] = rows; }); }));
+        }).then(function () {
+          var total = Object.keys(cache).reduce(function (sum, name) { return sum + (cache[name] || []).length; }, 0);
+          $("status").innerHTML = '<span class="pill">IndexedDB</span><span class="pill">' + Object.keys(cache).length + ' tables</span><span class="pill">' + total + ' rows</span><span>Read-only inspection mode.</span>';
+          if (!activeStore) activeStore = Object.keys(cache)[0];
+          renderTables();
+          renderContent();
+        }).catch(function (err) {
+          $("status").className = "card status error";
+          $("status").textContent = "Could not open local database: " + (err && err.message ? err.message : err);
+        });
+      }
+      $("refreshBtn").onclick = function () { cache = {}; load(); };
+      $("filter").oninput = renderContent;
+      load();
+    })();
+  </script>
+
+  <script>
+    if ('serviceWorker' in navigator && window.location.protocol !== 'file:') {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('./service-worker.js').catch(function (error) {
+          console.warn('Service worker registration failed.', error);
+        });
+      });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,97 @@
+[
+  {
+    "id": "avatar-01",
+    "label": "Avatar 01",
+    "src": "assets/avatars/avatar-01.png"
+  },
+  {
+    "id": "avatar-02",
+    "label": "Avatar 02",
+    "src": "assets/avatars/avatar-02.png"
+  },
+  {
+    "id": "avatar-03",
+    "label": "Avatar 03",
+    "src": "assets/avatars/avatar-03.png"
+  },
+  {
+    "id": "avatar-04",
+    "label": "Avatar 04",
+    "src": "assets/avatars/avatar-04.png"
+  },
+  {
+    "id": "avatar-05",
+    "label": "Avatar 05",
+    "src": "assets/avatars/avatar-05.png"
+  },
+  {
+    "id": "avatar-06",
+    "label": "Avatar 06",
+    "src": "assets/avatars/avatar-06.png"
+  },
+  {
+    "id": "avatar-07",
+    "label": "Avatar 07",
+    "src": "assets/avatars/avatar-07.png"
+  },
+  {
+    "id": "avatar-08",
+    "label": "Avatar 08",
+    "src": "assets/avatars/avatar-08.png"
+  },
+  {
+    "id": "avatar-09",
+    "label": "Avatar 09",
+    "src": "assets/avatars/avatar-09.png"
+  },
+  {
+    "id": "avatar-10",
+    "label": "Avatar 10",
+    "src": "assets/avatars/avatar-10.png"
+  },
+  {
+    "id": "avatar-11",
+    "label": "Avatar 11",
+    "src": "assets/avatars/avatar-11.png"
+  },
+  {
+    "id": "avatar-12",
+    "label": "Avatar 12",
+    "src": "assets/avatars/avatar-12.png"
+  },
+  {
+    "id": "avatar-13",
+    "label": "Avatar 13",
+    "src": "assets/avatars/avatar-13.png"
+  },
+  {
+    "id": "avatar-14",
+    "label": "Avatar 14",
+    "src": "assets/avatars/avatar-14.png"
+  },
+  {
+    "id": "avatar-15",
+    "label": "Avatar 15",
+    "src": "assets/avatars/avatar-15.png"
+  },
+  {
+    "id": "avatar-16",
+    "label": "Avatar 16",
+    "src": "assets/avatars/avatar-16.png"
+  },
+  {
+    "id": "avatar-17",
+    "label": "Avatar 17",
+    "src": "assets/avatars/avatar-17.png"
+  },
+  {
+    "id": "avatar-18",
+    "label": "Avatar 18",
+    "src": "assets/avatars/avatar-18.png"
+  },
+  {
+    "id": "avatar-19",
+    "label": "Joey",
+    "src": "assets/avatars/avatar-19.png"
+  }
+]
