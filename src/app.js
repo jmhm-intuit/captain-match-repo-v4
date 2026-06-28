@@ -2,8 +2,8 @@
   var STORAGE_KEY = "squadflow_captain_v2_local";
   var DB_NAME = "captain_match_planner_local_db";
   var DB_VERSION = 3;
-  var DB_SCHEMA_VERSION = 3;
-  var APP_VERSION = "4.0";
+  var DB_SCHEMA_VERSION = 4;
+  var APP_VERSION = "4.01";
   var POS_KEYS = ["forward", "wing", "center", "defense", "goalie"];
   var POS_SHORT = { forward: "FWD", wing: "WNG", center: "CTR", defense: "DEF", goalie: "GK" };
   var POS_FULL = { forward: "Forward", wing: "Wing", center: "Center", defense: "Defense", goalie: "Goalie" };
@@ -88,7 +88,10 @@
     dbReady: false,
     storageBackend: "starting",
     persistenceStatus: "loading",
-    lastSavedAt: null
+    lastSavedAt: null,
+    scheduleViewMode: "summary",
+    tournamentSetupEditing: false,
+    dataTable: "tournaments"
   };
 
   var data = emptyData();
@@ -382,7 +385,8 @@
     render();
     setTimeout(function () { state.toast = null; render(); }, 1800);
   }
-  function activeTournament() { return data.tournaments.find(function (t) { return t.id === state.activeTournamentId; }) || data.tournaments[0]; }
+  function visibleTournaments() { return data.tournaments.filter(function (t) { return !t.archived; }); }
+  function activeTournament() { return data.tournaments.find(function (t) { return t.id === state.activeTournamentId; }) || visibleTournaments()[0] || data.tournaments[0]; }
   function activeMatch() { return data.matches.find(function (m) { return m.id === state.activeMatchId; }) || data.matches.find(function (m) { return m.tournamentId === state.activeTournamentId; }); }
   function tournamentPlayers(tId) { return data.tournamentPlayers.filter(function (p) { return p.tournamentId === tId; }); }
   function tournamentPlayer(id) { return data.tournamentPlayers.find(function (p) { return p.id === id; }); }
@@ -639,6 +643,7 @@
       a.updatedAt = a.updatedAt || a.createdAt;
     });
     d.tournaments.forEach(function (t) {
+      if (t.archived === undefined) t.archived = false;
       var ms = (d.matches || []).filter(function (m) { return m.tournamentId === t.id; });
       var dates = ms.map(function (m) { return m.date; }).filter(Boolean).sort();
       if (!t.startDate && dates.length) t.startDate = dates[0];
@@ -769,6 +774,15 @@
       data.matchPlayers = data.matchPlayers.filter(function (p) { return removeIds.indexOf(p.matchId) < 0; });
     }
   }
+  function regenerateEmptyGeneratedSchedule(tId) {
+    var removeIds = data.matches.filter(function (m) { return m.tournamentId === tId && isTrimCandidate(m); }).map(function (m) { return m.id; });
+    if (removeIds.length) {
+      data.matches = data.matches.filter(function (m) { return removeIds.indexOf(m.id) < 0; });
+      data.matchPlayers = data.matchPlayers.filter(function (p) { return removeIds.indexOf(p.matchId) < 0; });
+    }
+    fillTournamentSchedule(tId);
+  }
+
   function fillTournamentSchedule(tId) {
     var t = data.tournaments.find(function (x) { return x.id === tId; });
     if (!t) return false;
@@ -971,6 +985,7 @@
     Object.keys(best.assign).forEach(function (pos) { lineup[pos] = best.assign[pos]; });
     match.lineup = lineup;
     match.status = "planned";
+    match.showMinutes = true;
     match.updatedAt = nowIso();
     save();
     render();
@@ -1166,14 +1181,14 @@
   }
   function preferredTournamentId() {
     var candidates = [];
-    data.tournaments.forEach(function (t) {
+    visibleTournaments().forEach(function (t) {
       matches(t.id).filter(isUpcomingDateMatch).forEach(function (m) {
         candidates.push({ tournamentId: t.id, matchId: m.id, date: m.date, time: m.time || "" });
       });
     });
     candidates.sort(function (a, b) { return (a.date + a.time).localeCompare(b.date + b.time); });
     if (candidates.length) return candidates[0].tournamentId;
-    var sorted = data.tournaments.slice().sort(function (a, b) {
+    var sorted = visibleTournaments().slice().sort(function (a, b) {
       var aDate = tournamentStats(a.id).end || a.updatedAt || a.createdAt || "";
       var bDate = tournamentStats(b.id).end || b.updatedAt || b.createdAt || "";
       return bDate.localeCompare(aDate);
@@ -1259,6 +1274,7 @@
     return weeks;
   }
   function tournamentStatus(t) {
+    if (t.archived) return { label: 'Archived', className: '', next: null };
     var next = nextMatch(t.id);
     var hasUpcoming = matches(t.id).some(isUpcomingDateMatch);
     var preferred = preferredTournamentId();
@@ -1578,12 +1594,12 @@
   function renderShell() {
     if (state.view === "home" || state.view === "tournaments" || state.view === "matches") syncActiveTournamentToPreferred(false);
     var t = activeTournament();
-    var page = state.view === "home" ? renderHome() : state.view === "tournaments" ? renderTournaments() : state.view === "team" ? renderTeam() : state.view === "matches" ? renderMatches() : renderPlan();
+    var page = state.view === "home" ? renderHome() : state.view === "tournaments" ? renderTournaments() : state.view === "team" ? renderTeam() : state.view === "matches" ? renderMatches() : state.view === "data" ? renderDataView() : renderPlan();
     return '<div class="app-shell">' +
       '<div class="topbar"><div class="brand"><div class="logo">MP</div><div><h1>Captain Match Planner</h1><p>' + escapeHtml(t ? t.teamName + ' / ' + t.name : 'Local 7v7 planner') + '</p></div></div>' +
-      '<div class="top-actions"><a class="btn secondary small link-btn" href="database-check.html" target="_blank">Data Base Check</a><button class="btn secondary small" onclick="app.exportData()">Export</button><button class="btn secondary small" onclick="app.importDataPrompt()">Import</button><button class="btn danger small" onclick="app.resetData()">Reset</button></div></div>' +
+      '<div class="top-actions"><button class="btn secondary small" onclick="app.exportData()">Export</button><button class="btn secondary small" onclick="app.importDataPrompt()">Import</button></div></div>' +
       page +
-      '<div class="nav"><button class="' + navClass("home") + '" onclick="app.go(\'home\')">Home</button><button class="' + navClass("tournaments") + '" onclick="app.go(\'tournaments\')">Tournaments</button><button class="' + navClass("team") + '" onclick="app.go(\'team\')">Team</button><button class="' + navClass("matches") + '" onclick="app.go(\'matches\')">Matches</button></div>' +
+      '<div class="nav"><button class="' + navClass("home") + '" onclick="app.go(\'home\')">Home</button><button class="' + navClass("tournaments") + '" onclick="app.go(\'tournaments\')">Tournaments</button><button class="' + navClass("team") + '" onclick="app.go(\'team\')">Team</button><button class="' + navClass("matches") + '" onclick="app.go(\'matches\')">Matches</button><button class="' + navClass("data") + '" onclick="app.go(\'data\')">Data</button></div>' +
       (state.toast ? '<div class="toast">' + escapeHtml(state.toast) + '</div>' : '') +
       (state.avatarTarget ? renderAvatarModal() : '') +
       (state.tournamentPanelOpen ? renderTournamentPanel() : '') +
@@ -1597,6 +1613,27 @@
     if (backend === "IndexedDB local database") backend = "Local DB";
     return backend + " · " + status;
   }
+  function dataStoreNames() {
+    return ["tournaments", "matches", "tournamentPlayers", "globalPlayers", "matchPlayers", "customAvatars", "playerAliases", "matchLineups", "lineupAssignments", "substitutionWindows", "substitutionChanges"];
+  }
+  function formatCellValue(value) {
+    if (value === null || value === undefined || value === '') return '<span class="muted-cell">—</span>';
+    if (typeof value === 'object') return '<details><summary>JSON</summary><pre>' + escapeHtml(JSON.stringify(value, null, 2)) + '</pre></details>';
+    return escapeHtml(String(value));
+  }
+  function renderDataView() {
+    var table = state.dataTable || 'tournaments';
+    var stores = dataStoreNames();
+    var rows = rowsForStore(table, data);
+    var columns = [];
+    rows.slice(0, 20).forEach(function (row) { Object.keys(row || {}).forEach(function (key) { if (columns.indexOf(key) < 0) columns.push(key); }); });
+    if (!columns.length) columns = ['id'];
+    var buttons = stores.map(function (name) { var count = rowsForStore(name, data).length; return '<button class="data-table-btn ' + (name === table ? 'active' : '') + '" onclick="app.setDataTable(\'' + name + '\')"><span>' + escapeHtml(name) + '</span><strong>' + count + '</strong></button>'; }).join('');
+    return '<div class="grid data-page"><div class="card"><div class="row space"><div><div class="eyebrow">Local database</div><h2>Data</h2><div class="subtext">Read-only view of the current IndexedDB/local data. Use this to verify what the app has saved.</div></div><a class="btn secondary small link-btn" href="database-check.html" target="_blank">Open full page</a></div></div>' +
+      '<div class="data-layout"><div class="card data-sidebar"><h3>Tables</h3><div class="data-table-list">' + buttons + '</div></div>' +
+      '<div class="card data-table-card"><div class="row space"><div><h3>' + escapeHtml(table) + '</h3><div class="subtext">' + rows.length + ' records</div></div></div><div class="data-table-wrap"><table><thead><tr>' + columns.map(function (c) { return '<th>' + escapeHtml(c) + '</th>'; }).join('') + '</tr></thead><tbody>' + (rows.length ? rows.map(function (row) { return '<tr>' + columns.map(function (c) { return '<td>' + formatCellValue(row[c]) + '</td>'; }).join('') + '</tr>'; }).join('') : '<tr><td colspan="' + columns.length + '">No rows saved for this table.</td></tr>') + '</tbody></table></div></div></div></div>';
+  }
+
   function renderHome() {
     var t = activeTournament();
     var next = nextMatch(t.id);
@@ -1622,19 +1659,62 @@
   function renderTournaments() {
     var t = activeTournament();
     var st = tournamentStats(t.id);
+    var mode = state.scheduleViewMode || 'summary';
     var status = tournamentStatus(t);
-    return '<div class="grid tournament-page">' +
-      '<div class="card tournament-command compact"><div class="row space tournament-top-row"><div><div class="eyebrow">Tournament organization</div><h2>' + escapeHtml(t.name) + '</h2><div class="subtext">Set the structure, dates, times, field, and opponent. Scores stay out of this section.</div></div><div class="row tournament-actions">' + renderTournamentSelector(t) + '<button class="btn" onclick="app.openTournamentPanel()">+ Create tournament</button></div></div>' +
-        '<div class="tournament-metrics"><div><strong>' + formatDateLabel(st.start) + '</strong><span>Start</span></div><div><strong>' + (t.defaultDay || weekdayName(st.start || '')) + '</strong><span>Fixed day</span></div><div><strong>' + (t.matchTarget || 7) + '</strong><span>Confirmed matches</span></div><div><strong>' + st.doubleHeaders + '</strong><span>Double headers</span></div></div></div>' +
-      '<div class="card active-tournament-card"><div class="row space"><div><h2>Active tournament setup</h2><div class="subtext">Skip weeks push later matches out. Double headers bring the tournament end sooner. Times stay blank until selected.</div></div></div>' +
-        '<div class="field-row three"><div><label>Tournament name</label><input value="' + escapeAttr(t.name || '') + '" onchange="app.updateTournament(\'' + t.id + '\',\'name\',this.value)"></div><div><label>Start date</label><input type="date" value="' + escapeAttr(t.startDate || st.start || '') + '" onchange="app.updateTournament(\'' + t.id + '\',\'startDate\',this.value)"></div><div><label>Fixed day</label><select onchange="app.updateTournament(\'' + t.id + '\',\'defaultDay\',this.value)">' + weekdayOptions(t.defaultDay || weekdayName(t.startDate || st.start || '') || 'Tuesday') + '</select></div></div>' +
-        '<div class="field-row three"><div><label>Confirmed matches</label><select onchange="app.setTournamentTarget(\'' + t.id + '\',this.value)"><option value="7" ' + ((t.matchTarget || 7) == 7 ? 'selected' : '') + '>7 regular matches</option><option value="8" ' + ((t.matchTarget || 7) == 8 ? 'selected' : '') + '>8 with extension</option><option value="9" ' + ((t.matchTarget || 7) == 9 ? 'selected' : '') + '>9 with finals</option></select></div><div><label>Default field</label><input value="' + escapeAttr(t.location || '') + '" placeholder="Optional" onchange="app.updateTournamentLocation(\'' + t.id + '\',this.value)"></div><div><label>Schedule span</label><div class="readonly-chip">' + tournamentWeeks(t.id).length + ' weeks visible</div></div></div></div>' +
-      '<div class="card"><div class="row space"><div><h2>Schedule</h2><div class="subtext">Week tracks the calendar. Match tracks the game number inside this tournament. Skip weeks stay grey; double headers are highlighted.</div></div><button class="btn ghost" onclick="app.refillSchedule(\'' + t.id + '\')">Repair / fill schedule</button></div><div class="schedule-table"><div class="schedule-row schedule-head"><div>Week</div><div>Match</div><div>Date</div><div>Time</div><div>vs</div><div>Field</div><div>Status</div><div>Actions</div></div>' + tournamentWeeks(t.id).map(renderScheduleRowsForWeek).join('') + '</div></div>' +
+    return '<div class="grid tournament-page redesigned">' +
+      '<div class="card tournament-command compact"><div class="row space tournament-top-row"><div><div class="eyebrow">Tournament organization</div><h2>' + escapeHtml(t.name) + '</h2><div class="subtext">Current schedule defaults to the tournament with the closest upcoming match. Day and time are the critical fields; field and opponent live in Full view.</div></div><div class="row tournament-actions">' + renderTournamentSelector(t) + '<button class="btn" onclick="app.openTournamentPanel()">+ Create tournament</button></div></div>' +
+        '<div class="tournament-metrics compact"><div><strong>' + formatDateLabel(st.start) + '</strong><span>Start</span></div><div><strong>' + (t.defaultDay || weekdayName(st.start || '')) + '</strong><span>Play day</span></div><div><strong>' + (t.matchTarget || 7) + '</strong><span>Length</span></div><div><strong>' + st.doubleHeaders + '</strong><span>Double headers</span></div></div></div>' +
+      renderTournamentSetupCard(t, st) +
+      '<div class="card schedule-card"><div class="row space"><div><h2>Schedule</h2><div class="subtext">Summary shows day and time. Full adds field, opponent, and exception actions. Skip weeks remain visible.</div></div><div class="row"><div class="tabs compact-tabs"><button class="' + (mode === 'summary' ? 'active' : '') + '" onclick="app.setScheduleView(\'summary\')">Summary</button><button class="' + (mode === 'full' ? 'active' : '') + '" onclick="app.setScheduleView(\'full\')">Full</button></div><button class="btn ghost small" onclick="app.refillSchedule(\'' + t.id + '\')">Repair / fill</button></div></div><div class="schedule-table schedule-' + mode + '">' + renderScheduleRows(t, mode) + '</div></div>' +
       '<div class="card"><h2>All tournaments</h2><div class="tournament-list">' + data.tournaments.map(renderTournamentItem).join('') + '</div></div>' +
       '</div>';
   }
-  function renderWeekCard(w) {
-    return renderScheduleRowsForWeek(w);
+  function renderTournamentSetupCard(t, st) {
+    if (!state.tournamentSetupEditing) {
+      return '<div class="card active-tournament-card setup-summary-card"><div class="row space"><div><h2>Tournament setup</h2><div class="subtext">Base schedule: start date, weekly play day, length, and default field.</div></div><div class="row"><button class="btn secondary small" onclick="app.startTournamentEdit()">✎ Edit</button><button class="btn ghost small" onclick="app.deleteTournamentPrompt(\'' + t.id + '\')">Archive / delete</button></div></div>' +
+        '<div class="setup-summary-grid"><div><span>Name</span><strong>' + escapeHtml(t.name || 'Tournament') + '</strong></div><div><span>Start date</span><strong>' + escapeHtml(formatLongDate(t.startDate || st.start || '')) + '</strong></div><div><span>Play day</span><strong>' + escapeHtml(t.defaultDay || weekdayName(st.start || '') || '—') + '</strong></div><div><span>Length</span><strong>' + (t.matchTarget || 7) + ' matches</strong></div><div><span>Default field</span><strong>' + escapeHtml(t.location || 'Not set') + '</strong></div></div></div>';
+    }
+    return '<div class="card active-tournament-card setup-edit-card"><div class="row space"><div><h2>Edit tournament setup</h2><div class="subtext">Structural changes rebuild empty generated matches. Planned/rescheduled matches are preserved.</div></div><div class="row"><button class="btn green small" onclick="app.applyTournamentSetup(\'' + t.id + '\')">Apply schedule changes</button><button class="btn secondary small" onclick="app.cancelTournamentEdit()">Cancel</button></div></div>' +
+      '<div class="field-row three"><div><label>Tournament name</label><input id="editTournamentName" value="' + escapeAttr(t.name || '') + '"></div><div><label>Start date</label><input id="editTournamentStart" type="date" value="' + escapeAttr(t.startDate || st.start || '') + '"></div><div><label>Play day</label><select id="editTournamentDay">' + weekdayOptions(t.defaultDay || weekdayName(t.startDate || st.start || '') || 'Tuesday') + '</select></div></div>' +
+      '<div class="field-row three"><div><label>Tournament length</label><select id="editTournamentTarget"><option value="7" ' + ((t.matchTarget || 7) == 7 ? 'selected' : '') + '>7 matches</option><option value="8" ' + ((t.matchTarget || 7) == 8 ? 'selected' : '') + '>8 matches</option><option value="9" ' + ((t.matchTarget || 7) == 9 ? 'selected' : '') + '>9 matches</option></select></div><div><label>Default field</label><input id="editTournamentLocation" placeholder="Optional" value="' + escapeAttr(t.location || '') + '"></div><div><label>Delete/archive</label><button class="btn ghost" onclick="app.deleteTournamentPrompt(\'' + t.id + '\')">Archive / delete tournament</button></div></div></div>';
+  }
+  function renderScheduleRows(t, mode) {
+    var weeks = tournamentWeeks(t.id);
+    if (!weeks.length) return '<div class="empty-state">No weeks generated yet.</div>';
+    if (mode === 'full') {
+      return '<div class="schedule-card-head full"><div>Week</div><div>Match</div><div>Date</div><div>Time</div><div>Opponent</div><div>Field</div><div>Status</div><div>Actions</div></div>' + weeks.map(renderScheduleWeekFull).join('');
+    }
+    return '<div class="schedule-card-head summary"><div>Week</div><div>Match</div><div>Day / date</div><div>Time</div><div>Actions</div></div>' + weeks.map(renderScheduleWeekSummary).join('');
+  }
+  function renderScheduleWeekSummary(w) {
+    var t = activeTournament();
+    if (!w.matches.length) {
+      var skipped = isSkipDate(t, w.date);
+      return '<div class="schedule-card-row schedule-summary-row schedule-skip"><div><strong>W' + w.index + '</strong></div><div><span class="badge">' + (skipped ? 'Skip week' : 'Open week') + '</span></div><div><strong>' + escapeHtml(formatLongDate(w.date)) + '</strong></div><div class="muted-cell">—</div><div class="row compact-actions">' + (skipped ? '<button class="btn small secondary" onclick="app.unskipWeek(\'' + t.id + '\',\'' + w.date + '\')">Unskip</button>' : '<button class="btn small secondary" onclick="app.skipWeek(\'' + t.id + '\',\'' + w.date + '\')">Skip</button>') + '<button class="btn small" onclick="app.addMatchOnDate(\'' + t.id + '\',\'' + w.date + '\')">Add game</button></div></div>';
+    }
+    var isDouble = w.matches.length > 1;
+    return w.matches.map(function (m, index) {
+      var defaultTime = index === 0 ? '19:00' : (w.matches[index - 1] && w.matches[index - 1].time ? addHoursToTime(w.matches[index - 1].time, 1) : '20:00');
+      var status = isDouble ? '<span class="badge warn">Double header</span>' : '';
+      if (m.sequenceLocked) status += '<span class="badge team">Rescheduled</span>';
+      return '<div class="schedule-card-row schedule-summary-row ' + (isDouble ? 'schedule-double' : '') + ' ' + (isPastMatch(m) ? 'schedule-past' : '') + '"><div><strong>W' + w.index + '</strong></div><div><strong>' + escapeHtml(matchScheduleLabel(m)) + '</strong>' + status + '</div><div><input type="date" value="' + escapeAttr(m.date || '') + '" onchange="app.updateMatch(\'' + m.id + '\',\'date\',this.value)"></div><div>' + timeInputHtml(m.id, m.time, defaultTime) + '</div><div class="row compact-actions"><button class="btn small" onclick="app.openMatch(\'' + m.id + '\')">Plan</button><button class="btn small secondary" onclick="app.addMatchOnDate(\'' + t.id + '\',\'' + w.date + '\')">Double</button><button class="btn small ghost" onclick="app.shiftFutureMatches(\'' + t.id + '\',\'' + w.date + '\')">Push +1wk</button></div></div>';
+    }).join('');
+  }
+  function renderScheduleWeekFull(w) {
+    var t = activeTournament();
+    if (!w.matches.length) {
+      var skipped = isSkipDate(t, w.date);
+      return '<div class="schedule-card-row schedule-full-row schedule-skip"><div><strong>Week ' + w.index + '</strong></div><div><span class="badge">' + (skipped ? 'Skip week' : 'Open week') + '</span></div><div>' + escapeHtml(formatLongDate(w.date)) + '</div><div></div><div></div><div></div><div>' + (skipped ? '<span class="badge">Skipped</span>' : '') + '</div><div class="row compact-actions">' + (skipped ? '<button class="btn small secondary" onclick="app.unskipWeek(\'' + t.id + '\',\'' + w.date + '\')">Unskip</button>' : '<button class="btn small ghost" onclick="app.skipWeek(\'' + t.id + '\',\'' + w.date + '\')">Skip</button>') + '<button class="btn small" onclick="app.addMatchOnDate(\'' + t.id + '\',\'' + w.date + '\')">Add game</button></div></div>';
+    }
+    var isDouble = w.matches.length > 1;
+    return w.matches.map(function (m, index) {
+      var defaultTime = index === 0 ? '19:00' : (w.matches[index - 1] && w.matches[index - 1].time ? addHoursToTime(w.matches[index - 1].time, 1) : '20:00');
+      var status = [];
+      if (isDouble) status.push('<span class="badge warn">Double header' + (index > 0 ? ' 2' : '') + '</span>');
+      if (isPastMatch(m)) status.push('<span class="badge">Past</span>');
+      if (m.sequenceLocked) status.push('<span class="badge team">Rescheduled</span>');
+      return '<div class="schedule-card-row schedule-full-row ' + (isDouble ? 'schedule-double' : '') + ' ' + (isPastMatch(m) ? 'schedule-past' : '') + '"><div><strong>Week ' + w.index + '</strong></div><div><strong>' + escapeHtml(matchScheduleLabel(m)) + '</strong></div><div><input type="date" value="' + escapeAttr(m.date || '') + '" onchange="app.updateMatch(\'' + m.id + '\',\'date\',this.value)"></div><div>' + timeInputHtml(m.id, m.time, defaultTime) + '</div><div><input value="' + escapeAttr(m.opponent || '') + '" placeholder="Opponent" onchange="app.updateMatch(\'' + m.id + '\',\'opponent\',this.value)"></div><div><input value="' + escapeAttr(m.location || '') + '" placeholder="Field" onchange="app.updateMatch(\'' + m.id + '\',\'location\',this.value)"></div><div>' + status.join(' ') + '</div><div class="row compact-actions"><button class="btn small" onclick="app.openMatch(\'' + m.id + '\')">Plan</button><button class="btn small secondary" onclick="app.addMatchOnDate(\'' + t.id + '\',\'' + w.date + '\')">Double</button><button class="btn small ghost" onclick="app.skipWeek(\'' + t.id + '\',\'' + w.date + '\')">Skip</button><button class="btn small ghost" onclick="app.shiftFutureMatches(\'' + t.id + '\',\'' + w.date + '\')">Push +1wk</button></div></div>';
+    }).join('');
   }
   function addHoursToTime(time, hours) {
     if (!time) return '';
@@ -1650,28 +1730,11 @@
     var fallback = escapeAttr(defaultTime || "19:00");
     return '<input type="time" value="' + current + '" data-default-time="' + fallback + '" onfocus="if(!this.value)this.value=this.dataset.defaultTime" onchange="app.updateMatch(\'' + matchId + '\',\'time\',this.value)">';
   }
-  function renderScheduleRowsForWeek(w) {
-    var t = activeTournament();
-    if (!w.matches.length) {
-      var skipped = isSkipDate(t, w.date);
-      return '<div class="schedule-row schedule-skip"><div><strong>Week ' + w.index + '</strong></div><div><span class="badge">' + (skipped ? 'Skip week' : 'Open week') + '</span></div><div>' + escapeHtml(formatLongDate(w.date)) + '</div><div></div><div></div><div></div><div>' + (skipped ? '<span class="badge">Skipped</span>' : '') + '</div><div><button class="btn small secondary" onclick="app.addMatchOnDate(\'' + t.id + '\',\'' + w.date + '\')">Add game</button></div></div>';
-    }
-    var isDouble = w.matches.length > 1;
-    return w.matches.map(function (m, index) {
-      var past = isPastMatch(m);
-      var defaultTime = index === 0 ? '19:00' : (w.matches[index - 1] && w.matches[index - 1].time ? addHoursToTime(w.matches[index - 1].time, 1) : '20:00');
-      var status = [];
-      if (isDouble) status.push('<span class="badge warn">Double header' + (index > 0 ? ' 2' : '') + '</span>');
-      if (past) status.push('<span class="badge">Past</span>');
-      if (m.sequenceLocked) status.push('<span class="badge team">Rescheduled</span>');
-      return '<div class="schedule-row ' + (isDouble ? 'schedule-double' : '') + ' ' + (past ? 'schedule-past' : '') + '"><div><strong>Week ' + w.index + '</strong></div><div><strong>' + escapeHtml(matchScheduleLabel(m)) + '</strong></div><div><input type="date" value="' + escapeAttr(m.date || '') + '" onchange="app.updateMatch(\'' + m.id + '\',\'date\',this.value)"></div><div>' + timeInputHtml(m.id, m.time, defaultTime) + '</div><div><input value="' + escapeAttr(m.opponent || '') + '" placeholder="Opponent" onchange="app.updateMatch(\'' + m.id + '\',\'opponent\',this.value)"></div><div><input value="' + escapeAttr(m.location || '') + '" placeholder="Field" onchange="app.updateMatch(\'' + m.id + '\',\'location\',this.value)"></div><div>' + status.join(' ') + '</div><div class="row"><button class="btn small" onclick="app.openMatch(\'' + m.id + '\')">Plan</button><button class="btn small secondary" onclick="app.addMatchOnDate(\'' + t.id + '\',\'' + w.date + '\')">Double</button><button class="btn small ghost" onclick="app.skipWeek(\'' + t.id + '\',\'' + w.date + '\')">Skip</button></div></div>';
-    }).join('');
-  }
   function renderTournamentItem(t) {
     var count = matches(t.id).length;
     var st = tournamentStats(t.id);
     var status = tournamentStatus(t);
-    return '<div class="tournament-item ' + (t.id === activeTournament().id ? 'active' : '') + '"><div><div class="player-title">' + escapeHtml(t.teamName) + ' / ' + escapeHtml(t.name) + ' <span class="badge ' + status.className + '">' + escapeHtml(status.label) + '</span></div><div class="subtext">' + escapeHtml(t.defaultDay || '') + ' · ' + count + ' matches · ' + formatDateLabel(st.start) + ' → ' + formatDateLabel(st.end) + '</div></div><button class="btn small secondary" onclick="app.setActiveTournament(\'' + t.id + '\')">Select</button></div>';
+    return '<div class="tournament-item ' + (t.id === activeTournament().id ? 'active' : '') + ' ' + (t.archived ? 'archived' : '') + '"><div><div class="player-title">' + escapeHtml(t.teamName) + ' / ' + escapeHtml(t.name) + ' <span class="badge ' + status.className + '">' + escapeHtml(status.label) + '</span></div><div class="subtext">' + escapeHtml(t.defaultDay || '') + ' · ' + count + ' matches · ' + formatDateLabel(st.start) + ' → ' + formatDateLabel(st.end) + '</div></div><button class="btn small secondary" onclick="app.setActiveTournament(\'' + t.id + '\')">Select</button></div>';
   }
 
   function renderTeam() {
@@ -1699,15 +1762,19 @@
     var gloveClass = tp.tournamentGoalie ? 'selected' : (skills.goalie >= 3 ? 'eligible' : 'disabled');
     var gloveTitle = tp.tournamentGoalie ? 'Tournament goalie' : (skills.goalie >= 3 ? 'Set as tournament goalie' : 'Needs 3+ goalie stars');
     if (!editing) {
-      return '<div class="roster-row ' + (skills.goalie >= 3 ? 'goalie-capable ' : '') + (membership === 'support' ? 'support-player' : 'team-player') + '"><div class="avatar"><img src="' + avatarById(avatarId).src + '" alt=""></div>' +
-        '<div class="roster-main"><div class="row"><div class="player-title">' + escapeHtml(name) + '</div>' + membershipBadge(membership) + '<span class="badge">' + escapeHtml(tp.primaryPosition || pos.primary) + ' / ' + escapeHtml(tp.secondaryPosition || pos.secondary) + '</span></div>' +
-        '<div class="subtext">Auto positions from stars. Max 3 positions can be rated 4 or 5.</div><div class="skills compact-skills readonly-skills">' + POS_KEYS.map(function (k) { return skillReadout(skills, k); }).join('') + '</div></div>' +
-        '<div class="roster-actions"><button class="btn small secondary" onclick="app.editPlayer(\'' + tp.id + '\')">✎ Edit</button><button class="glove-button ' + gloveClass + '" title="' + gloveTitle + '" onclick="app.setTournamentGoalie(\'' + tp.id + '\')">🧤</button><button class="x-button" onclick="app.askRemoveTournamentPlayer(\'' + tp.id + '\')">×</button></div></div>';
+      return '<div class="roster-matrix-row ' + (skills.goalie >= 3 ? 'goalie-capable ' : '') + (membership === 'support' ? 'support-player' : 'team-player') + '"><div class="avatar small"><img src="' + avatarById(avatarId).src + '" alt=""></div>' +
+        '<div class="roster-identity"><div class="player-title">' + escapeHtml(name) + '</div><div class="row mini-meta">' + membershipBadge(membership) + '<span class="badge">' + escapeHtml(tp.primaryPosition || pos.primary) + ' / ' + escapeHtml(tp.secondaryPosition || pos.secondary) + '</span></div></div>' +
+        '<div class="skill-mini-grid">' + POS_KEYS.map(function (k) { return skillReadoutCompact(skills, k); }).join('') + '</div>' +
+        '<div class="roster-actions compact-actions"><button class="btn small secondary" onclick="app.editPlayer(\'' + tp.id + '\')">✎</button><button class="glove-button ' + gloveClass + '" title="' + gloveTitle + '" onclick="app.setTournamentGoalie(\'' + tp.id + '\')">🧤</button><button class="x-button" onclick="app.askRemoveTournamentPlayer(\'' + tp.id + '\')">×</button></div></div>';
     }
     return '<div class="roster-row editing ' + (skills.goalie >= 3 ? 'goalie-capable ' : '') + (membership === 'support' ? 'support-player' : 'team-player') + '"><button class="avatar" onclick="app.pickAvatar(\'' + gp.id + '\')"><img src="' + avatarById(avatarId).src + '" alt=""></button>' +
       '<div class="roster-main"><div class="row"><input class="name-inline" value="' + escapeAttr(name) + '" oninput="app.updatePlayerDraft(\'name\',this.value)">' + membershipBadge(membership) + '<span class="badge">' + escapeHtml(pos.primary) + ' / ' + escapeHtml(pos.secondary) + '</span></div>' +
       '<div class="subtext">Edit mode. Changes are saved only after pressing Save.</div><div class="skills compact-skills">' + POS_KEYS.map(function (k) { return skillDraftEditor(skills, k); }).join('') + '</div></div>' +
       '<div class="roster-actions"><select onchange="app.updatePlayerDraft(\'membership\',this.value)"><option value="team" ' + (membership === 'team' ? 'selected' : '') + '>Team</option><option value="support" ' + (membership === 'support' ? 'selected' : '') + '>Support</option></select><button class="glove-button ' + gloveClass + '" title="' + gloveTitle + '" onclick="app.setTournamentGoalie(\'' + tp.id + '\')">🧤</button><button class="btn small green" onclick="app.savePlayerEdit()">Save</button><button class="btn small secondary" onclick="app.cancelPlayerEdit()">Cancel</button><button class="x-button" onclick="app.askRemoveTournamentPlayer(\'' + tp.id + '\')">×</button></div></div>';
+  }
+  function skillReadoutCompact(skills, key) {
+    var value = Number(skills[key] || 1);
+    return '<span class="skill-mini ' + skillClass(value) + '"><b>' + POS_SHORT[key] + '</b><em>' + value + '★</em></span>';
   }
   function skillReadout(skills, key) {
     var value = skills[key] || 1;
@@ -1786,11 +1853,14 @@
     var players = matchPlayers(match.id);
     var currentIds = players.map(function (p) { return p.tournamentPlayerId; }).filter(Boolean);
     var options = tournamentPlayers(match.tournamentId).filter(function (tp) { return currentIds.indexOf(tp.id) < 0; }).map(function (tp) { var gp = globalPlayer(tp.globalPlayerId); return '<option value="' + tp.id + '">' + escapeHtml(gp ? gp.name : 'Player') + ' · ' + escapeHtml(tp.membership) + '</option>'; }).join('');
-    return '<div class="card"><div class="step-header"><h2><span class="stepnum">2</span>Confirm players</h2><span class="badge">Team / Support / New</span></div>' +
+    var lineupReady = hasLineupData(match);
+    var minutes = lineupReady ? estimateMinutes(match) : {};
+    var minutesToggle = lineupReady ? '<label class="row minutes-toggle" style="margin:0;text-transform:none;letter-spacing:0"><input style="width:auto" type="checkbox" ' + (match.showMinutes ? 'checked' : '') + ' onchange="app.updateMatch(\'' + match.id + '\',\'showMinutes\',this.checked)"> Show estimated minutes</label>' : '<span class="subtext">Estimated minutes appear here after a lineup is generated.</span>';
+    return '<div class="card"><div class="step-header"><h2><span class="stepnum">2</span>Confirm players</h2><div class="row"><span class="badge">Team / Support / New</span>' + minutesToggle + '</div></div>' +
       '<div class="manual-player-add"><label>Add roster player manually</label><div class="row"><select id="manualPlayer_' + match.id + '"><option value="">Search/select roster player</option>' + options + '</select><button class="btn small" onclick="app.addRosterPlayerToMatch(\'' + match.id + '\')">Add</button></div></div>' +
-      (players.length ? '<div class="list">' + players.map(renderMatchPlayerConfirm).join('') + '</div>' : '<div class="empty-state">Import a WhatsApp list first, or add a roster player manually.</div>') + '</div>';
+      (players.length ? '<div class="list confirm-player-list">' + players.map(function (mp) { return renderMatchPlayerConfirm(mp, match, minutes); }).join('') + '</div>' : '<div class="empty-state">Import a WhatsApp list first, or add a roster player manually.</div>') + '</div>';
   }
-  function renderMatchPlayerConfirm(mp) {
+  function renderMatchPlayerConfirm(mp, match, minutes) {
     var suggested = mp.suggestedTournamentPlayerId ? tournamentPlayer(mp.suggestedTournamentPlayerId) : null;
     var sGp = suggested ? globalPlayer(suggested.globalPlayerId) : null;
     if (mp.status === "new") {
@@ -1801,7 +1871,8 @@
       return '<div class="item"><div><div class="row"><div class="player-title">' + escapeHtml(mp.name) + '</div><span class="badge warn">Review</span></div><div class="subtext">Possible match: ' + escapeHtml(sGp ? sGp.name : '') + '</div></div><div class="row"><button class="btn small green" onclick="app.acceptFuzzy(\'' + mp.matchId + '\',\'' + mp.id + '\')">Use existing</button><button class="btn small amber" onclick="app.rejectFuzzy(\'' + mp.matchId + '\',\'' + mp.id + '\')">Create support</button></div></div>';
     }
     var ctx = playerContext(mp);
-    return '<div class="item"><div class="row"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><div class="player-title">' + escapeHtml(ctx.name) + '</div><div class="subtext">Signup #' + mp.signupOrder + ' · ' + escapeHtml(mp.availability) + ' · ' + mp.probability + '%</div></div></div><div class="row">' + membershipBadge(ctx.membership) + '<label class="row" style="margin:0;text-transform:none;letter-spacing:0"><input style="width:auto" type="checkbox" ' + (mp.included ? 'checked' : '') + ' onchange="app.toggleMatchPlayer(\'' + mp.id + '\',this.checked)"> Include</label><button class="btn small secondary" onclick="app.removeMatchPlayer(\'' + mp.id + '\')">Remove</button></div></div>';
+    var minuteHtml = (match && match.showMinutes && minutes && minutes[mp.id] !== undefined) ? '<span class="minute-pill">~' + Math.round(minutes[mp.id] || 0) + ' min</span>' : '';
+    return '<div class="item confirm-player-row"><div class="row"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><div class="player-title">' + escapeHtml(ctx.name) + '</div><div class="subtext">Signup #' + mp.signupOrder + ' · ' + escapeHtml(mp.availability) + ' · ' + mp.probability + '%</div></div></div><div class="row">' + minuteHtml + membershipBadge(ctx.membership) + '<label class="row" style="margin:0;text-transform:none;letter-spacing:0"><input style="width:auto" type="checkbox" ' + (mp.included ? 'checked' : '') + ' onchange="app.toggleMatchPlayer(\'' + mp.id + '\',this.checked)"> Include</label><button class="btn small secondary" onclick="app.removeMatchPlayer(\'' + mp.id + '\')">Remove</button></div></div>';
   }
   function renderStepFormation(match) {
     var mode = match.suggestMode || 'positional';
@@ -1905,7 +1976,7 @@
   }
   function renderStepShare(match) {
     var text = buildShareText(match);
-    return '<div class="card share-step"><div class="step-header"><h2><span class="stepnum">6</span>Share match plan</h2><div class="row"><button class="btn" onclick="app.downloadShareImage(\'' + match.id + '\')">Download image</button><button class="btn secondary" onclick="app.copyShareImage(\'' + match.id + '\')">Copy image to clipboard</button><button class="btn ghost" onclick="app.copyShareText(\'' + match.id + '\')">Copy WhatsApp text</button></div></div><div class="share-stack"><div class="share-main">' + renderShareCard(match) + '</div><div class="share-message"><label>WhatsApp message</label><textarea class="share-text" id="shareText">' + escapeHtml(text) + '</textarea></div></div></div>';
+    return '<div class="card share-step"><div class="step-header"><h2><span class="stepnum">6</span>Share match plan</h2><div class="row"><button class="btn" onclick="app.downloadShareImage(\'' + match.id + '\')">Download image</button><button class="btn secondary" onclick="app.openShareImage(\'' + match.id + '\')">Open image</button><button class="btn secondary" onclick="app.copyShareImage(\'' + match.id + '\')">Copy image to clipboard</button><button class="btn ghost" onclick="app.copyShareText(\'' + match.id + '\')">Copy WhatsApp text</button></div></div><div class="share-stack"><div class="share-main">' + renderShareCard(match) + '</div><div class="share-message"><label>WhatsApp message</label><textarea class="share-text" id="shareText">' + escapeHtml(text) + '</textarea></div></div></div>';
   }
   function renderShareCard(match) {
     var t = activeTournament();
@@ -1981,12 +2052,19 @@
     if (match.strategyNote) { lines.push(""); lines.push("Strategy: " + match.strategyNote); }
     return lines.join("\n");
   }
+  function absoluteUrlMaybe(value) {
+    if (!value || /^data:|^blob:|^https?:/i.test(value)) return value;
+    try { return new URL(value, window.location.href).href; } catch (e) { return value; }
+  }
+  function absolutizeCssUrls(value) {
+    return String(value || '').replace(/url\((['"]?)([^'")]+)\1\)/g, function (_, quote, url) { return 'url("' + absoluteUrlMaybe(url) + '")'; });
+  }
   function prepareShareClone(node) {
     var clone = node.cloneNode(true);
     function inline(src, dst) {
       var cs = window.getComputedStyle(src);
-      dst.setAttribute('style', cs.cssText);
-      if (dst.tagName && dst.tagName.toLowerCase() === 'img') dst.setAttribute('src', src.src);
+      dst.setAttribute('style', absolutizeCssUrls(cs.cssText));
+      if (dst.tagName && dst.tagName.toLowerCase() === 'img') dst.setAttribute('src', absoluteUrlMaybe(src.currentSrc || src.src || dst.getAttribute('src')));
       for (var i = 0; i < src.children.length; i++) inline(src.children[i], dst.children[i]);
     }
     inline(node, clone);
@@ -1994,13 +2072,15 @@
   }
   function shareCardBlob(callback) {
     var node = document.getElementById('shareCard');
-    if (!node) return toast('No match image to export.');
+    if (!node) { toast('No match image to export.'); return callback && callback(null); }
     var rect = node.getBoundingClientRect();
+    if (!rect.width || !rect.height) { toast('Image preview is not ready yet.'); return callback && callback(null); }
     var clone = prepareShareClone(node);
     clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
     var xhtml = new XMLSerializer().serializeToString(clone);
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + rect.width + '" height="' + rect.height + '"><foreignObject width="100%" height="100%">' + xhtml + '</foreignObject></svg>';
     var img = new Image();
+    var objectUrl = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
     img.onload = function () {
       var canvas = document.createElement('canvas');
       canvas.width = Math.ceil(rect.width * 2);
@@ -2008,11 +2088,10 @@
       var ctx = canvas.getContext('2d');
       ctx.scale(2, 2);
       ctx.drawImage(img, 0, 0);
-      canvas.toBlob(function (blob) { callback(blob); }, 'image/png');
-      URL.revokeObjectURL(img.src);
+      canvas.toBlob(function (blob) { URL.revokeObjectURL(objectUrl); callback(blob); }, 'image/png');
     };
-    img.onerror = function () { toast('Could not render image in this browser.'); };
-    img.src = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+    img.onerror = function () { URL.revokeObjectURL(objectUrl); toast('Could not render image in this browser. Try Open image.'); if (callback) callback(null); };
+    img.src = objectUrl;
   }
   function membershipBadge(m) { return '<span class="badge ' + (m === 'team' ? 'team' : 'support') + '">' + (m === 'team' ? 'Team' : 'Support') + '</span>'; }
   function weekdayOptions(selected) {
@@ -2046,6 +2125,35 @@
     closeTournamentPanel: function () { state.tournamentPanelOpen = false; render(); },
     resetData: resetData,
     setActiveTournament: function (id) { state.activeTournamentId = id; var m = nextMatch(id); state.activeMatchId = m && m.id; render(); },
+    setScheduleView: function (mode) { state.scheduleViewMode = mode === 'full' ? 'full' : 'summary'; render(); },
+    setDataTable: function (name) { state.dataTable = name || 'tournaments'; render(); },
+    startTournamentEdit: function () { state.tournamentSetupEditing = true; render(); },
+    cancelTournamentEdit: function () { state.tournamentSetupEditing = false; render(); },
+    applyTournamentSetup: function (tId) {
+      var t = data.tournaments.find(function (x) { return x.id === tId; }); if (!t) return;
+      var oldStart = t.startDate || ''; var oldDay = t.defaultDay || ''; var oldTarget = Number(t.matchTarget || 7); var oldLocation = t.location || '';
+      var name = document.getElementById('editTournamentName'); var start = document.getElementById('editTournamentStart'); var day = document.getElementById('editTournamentDay'); var target = document.getElementById('editTournamentTarget'); var loc = document.getElementById('editTournamentLocation');
+      t.name = name && name.value ? name.value : t.name;
+      t.startDate = start && start.value ? start.value : t.startDate;
+      t.defaultDay = day && day.value ? day.value : t.defaultDay;
+      t.matchTarget = clampMatchTarget(target && target.value ? target.value : t.matchTarget);
+      t.location = loc ? loc.value : t.location;
+      var structural = oldStart !== (t.startDate || '') || oldDay !== (t.defaultDay || '') || oldTarget !== Number(t.matchTarget || 7);
+      if (oldLocation !== (t.location || '') && confirm('Update the default field for future matches in ' + (t.name || 'this tournament') + '? Past matches will not change.')) {
+        var today = todayDateString();
+        matches(tId).filter(function (m) { return !m.date || m.date >= today; }).forEach(function (m) { m.location = t.location || ''; m.updatedAt = nowIso(); });
+      }
+      if (structural) regenerateEmptyGeneratedSchedule(tId); else { fillTournamentSchedule(tId); renumberTournamentMatches(tId); }
+      t.updatedAt = nowIso(); state.tournamentSetupEditing = false; save(); render(); toast('Tournament setup updated.');
+    },
+    deleteTournamentPrompt: function (tId) {
+      var t = data.tournaments.find(function (x) { return x.id === tId; }); if (!t) return;
+      var choice = prompt('Archive or delete ' + (t.name || 'this tournament') + '?\n\nType ARCHIVE to hide it but keep data.\nType DELETE to permanently delete the tournament, matches, and roster copy.');
+      if (!choice) return; choice = choice.trim().toUpperCase();
+      if (choice === 'ARCHIVE') { t.archived = true; t.updatedAt = nowIso(); state.activeTournamentId = preferredTournamentId() || (visibleTournaments()[0] && visibleTournaments()[0].id) || (data.tournaments[0] && data.tournaments[0].id); save(); render(); toast('Tournament archived.'); return; }
+      if (choice === 'DELETE') { var confirmName = prompt('Permanent delete. Type the tournament name to confirm:', ''); if (confirmName !== (t.name || '')) return toast('Delete cancelled.'); var matchIds = data.matches.filter(function (m) { return m.tournamentId === tId; }).map(function (m) { return m.id; }); data.tournaments = data.tournaments.filter(function (x) { return x.id !== tId; }); data.matches = data.matches.filter(function (m) { return m.tournamentId !== tId; }); data.matchPlayers = data.matchPlayers.filter(function (p) { return matchIds.indexOf(p.matchId) < 0; }); data.tournamentPlayers = data.tournamentPlayers.filter(function (p) { return p.tournamentId !== tId; }); state.activeTournamentId = preferredTournamentId() || (visibleTournaments()[0] && visibleTournaments()[0].id) || (data.tournaments[0] && data.tournaments[0].id); var next = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null; state.activeMatchId = next && next.id; save(); render(); toast('Tournament deleted.'); return; }
+      toast('No changes made.');
+    },
     createTournament: function () {
       var name = document.getElementById('newTournamentName').value || 'Tournament';
       var teamName = activeTournament() ? activeTournament().teamName : 'Team';
@@ -2092,8 +2200,10 @@
     updateTournamentLocation: function (tId, value) { var t = data.tournaments.find(function (x) { return x.id === tId; }); if (!t) return; var old = t.location || ''; t.location = value || ''; if (old !== t.location && confirm('Update the default field for future matches in ' + (t.name || 'this tournament') + '? Past matches will not change.')) { var today = todayDateString(); matches(tId).filter(function (m) { return !m.date || m.date >= today; }).forEach(function (m) { m.location = t.location; m.updatedAt = nowIso(); }); } t.updatedAt = nowIso(); save(); render(); },
     setTournamentTarget: function (tId, value) { var t = data.tournaments.find(function (x) { return x.id === tId; }); if (!t) return; t.matchTarget = clampMatchTarget(value); fillTournamentSchedule(tId); t.updatedAt = nowIso(); save(); render(); toast('Tournament target updated.'); },
     refillSchedule: function (tId, shouldRender) { fillTournamentSchedule(tId); if (shouldRender !== false) { save(); render(); toast('Schedule repaired and filled to target.'); } },
-    addMatchOnDate: function (tId, date) { var t = data.tournaments.find(function (x) { return x.id === tId; }); if (t) removeSkipDate(t, date); var existing = matches(tId).filter(function (m) { return m.date === date; }).sort(function (a, b) { return (a.time || '').localeCompare(b.time || ''); }); var m = createMatchObject(tId, date, '', ''); m.generatedFromTournament = false; if (existing.length && existing[existing.length - 1].time) m.time = addHoursToTime(existing[existing.length - 1].time, 1); data.matches.push(m); trimExtraGeneratedMatches(tId); renumberTournamentMatches(tId); if (t) t.weekCount = tournamentWeeks(tId).length; state.activeTournamentId = tId; state.activeMatchId = m.id; save(); render(); toast('Match added for ' + date + '.'); },
+    addMatchOnDate: function (tId, date) { var t = data.tournaments.find(function (x) { return x.id === tId; }); if (t) removeSkipDate(t, date); var existing = matches(tId).filter(function (m) { return m.date === date; }).sort(function (a, b) { return (a.time || '').localeCompare(b.time || ''); }); var m = createMatchObject(tId, date, '', ''); m.generatedFromTournament = false; if (existing.length) { if (!existing[0].time) { existing[0].time = '19:00'; existing[0].updatedAt = nowIso(); } m.time = addHoursToTime(existing[existing.length - 1].time || '19:00', 1) || '20:00'; } data.matches.push(m); trimExtraGeneratedMatches(tId); renumberTournamentMatches(tId); if (t) t.weekCount = tournamentWeeks(tId).length; state.activeTournamentId = tId; state.activeMatchId = m.id; save(); render(); toast(existing.length ? 'Double-header match added.' : 'Match added for ' + date + '.'); },
     skipWeek: function (tId, date) { var t = data.tournaments.find(function (x) { return x.id === tId; }); if (!t) return; var existing = matches(tId).filter(function (m) { return m.date === date; }); if (!existing.length && isSkipDate(t, date)) return toast('This week is already skipped.'); if (!confirm('Skip week ' + date + '? This removes matches on that date and adds a future week if needed.')) return; addSkipDate(t, date); var ids = existing.map(function (m) { return m.id; }); data.matches = data.matches.filter(function (m) { return ids.indexOf(m.id) < 0; }); data.matchPlayers = data.matchPlayers.filter(function (p) { return ids.indexOf(p.matchId) < 0; }); fillTournamentSchedule(tId); if (ids.indexOf(state.activeMatchId) >= 0) { var n = nextMatch(tId); state.activeMatchId = n && n.id; } save(); render(); toast('Skip week added.'); },
+    unskipWeek: function (tId, date) { var t = data.tournaments.find(function (x) { return x.id === tId; }); if (!t) return; removeSkipDate(t, date); fillTournamentSchedule(tId); save(); render(); toast('Skip week removed.'); },
+    shiftFutureMatches: function (tId, date) { if (!confirm('Move this week and all future matches one week later? Match numbers will stay in order.')) return; matches(tId).filter(function (m) { return m.date && m.date >= date && m.status !== 'completed'; }).forEach(function (m) { m.date = addDays(m.date, 7); m.sequenceLocked = true; m.updatedAt = nowIso(); }); var t = data.tournaments.find(function (x) { return x.id === tId; }); if (t) { t.skipDates = skipDatesFor(t).map(function (d) { return d >= date ? addDays(d, 7) : d; }); t.updatedAt = nowIso(); } renumberTournamentMatches(tId); save(); render(); toast('Future schedule shifted one week.'); },
     addManualMatch: function () { var t = activeTournament(); var m = createMatchObject(t.id, nextWeekdayDate(t.defaultDay), '', ''); m.generatedFromTournament = false; data.matches.push(m); renumberTournamentMatches(t.id); state.activeMatchId = m.id; save(); render(); toast('Match added.'); },
     generateMoreMatches: function () { var t = activeTournament(); var count = Number(prompt('Confirmed matches target?', String(t.matchTarget || 7)) || t.matchTarget || 7); this.setTournamentTarget(t.id, count); },
     updateMatch: function (matchId, field, value, rerender) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; var oldDate = m.date; m[field] = value; if (field === 'formation') { m.lineup = {}; m.subs = []; state.momentByMatch[matchId] = 'initial'; normalizeFormationLineup(m); } if (field === 'date') { var t = data.tournaments.find(function (x) { return x.id === m.tournamentId; }); if (oldDate && oldDate !== value) m.sequenceLocked = true; if (t) removeSkipDate(t, value); } if (field === 'date' || field === 'time' || field === 'opponent' || field === 'location') { renumberTournamentMatches(m.tournamentId); var tt = data.tournaments.find(function (x) { return x.id === m.tournamentId; }); if (tt) tt.weekCount = tournamentWeeks(m.tournamentId).length; } m.updatedAt = nowIso(); save(); if (rerender !== false) render(); },
@@ -2112,9 +2222,9 @@
     removeMatchPlayer: function (mpId) { data.matchPlayers = data.matchPlayers.filter(function (p) { return p.id !== mpId; }); save(); render(); },
     suggestLineup: suggestLineup,
     selectSlot: function (position) { state.activeSlot = state.activeSlot === position ? null : position; render(); },
-    assignSelected: function (mpId) { var match = activeMatch(); if (!match || !state.activeSlot) return toast('Select a field slot first.'); Object.keys(lineupFor(match)).forEach(function (pos) { if (match.lineup[pos] === mpId) delete match.lineup[pos]; }); match.lineup[state.activeSlot] = mpId; match.status = 'planned'; state.activeSlot = null; save(); render(); },
+    assignSelected: function (mpId) { var match = activeMatch(); if (!match || !state.activeSlot) return toast('Select a field slot first.'); Object.keys(lineupFor(match)).forEach(function (pos) { if (match.lineup[pos] === mpId) delete match.lineup[pos]; }); match.lineup[state.activeSlot] = mpId; match.status = 'planned'; match.showMinutes = true; state.activeSlot = null; save(); render(); },
     clearSlot: function (matchId, position) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; delete lineupFor(m)[position]; save(); render(); },
-    clearLineup: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; m.lineup = {}; m.subs = []; state.momentByMatch[matchId] = 'initial'; save(); render(); },
+    clearLineup: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; m.lineup = {}; m.subs = []; m.showMinutes = false; state.momentByMatch[matchId] = 'initial'; save(); render(); },
     setMoment: function (matchId, momentId) { state.momentByMatch[matchId] = momentId; render(); },
     applySubTemplate: applySubTemplate,
     addWindow: addWindow,
@@ -2129,7 +2239,8 @@
     deleteSub: deleteSub,
     clearSubs: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; m.subs = []; save(); render(); },
     copyShareText: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); var text = buildShareText(m); navigator.clipboard && navigator.clipboard.writeText(text).then(function () { toast('Copied to clipboard.'); }).catch(function () { fallbackCopy(text); }); },
-    downloadShareImage: function (matchId) { shareCardBlob(function (blob) { if (!blob) return toast('Could not create image.'); var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'match-planner-card.png'; a.click(); URL.revokeObjectURL(a.href); toast('Image downloaded.'); }); },
+    downloadShareImage: function (matchId) { shareCardBlob(function (blob) { if (!blob) return toast('Could not create image.'); var url = URL.createObjectURL(blob); var a = document.createElement('a'); a.href = url; a.download = 'match-planner-card.png'; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function () { URL.revokeObjectURL(url); }, 2000); toast('Image downloaded.'); }); },
+    openShareImage: function (matchId) { shareCardBlob(function (blob) { if (!blob) return toast('Could not create image.'); var url = URL.createObjectURL(blob); var opened = window.open(url, '_blank'); if (!opened) toast('Popup blocked. Use Download image instead.'); setTimeout(function () { URL.revokeObjectURL(url); }, 60000); }); },
     copyShareImage: function (matchId) { if (!navigator.clipboard || !window.ClipboardItem) return toast('Clipboard image copy is not supported in this browser.'); shareCardBlob(function (blob) { if (!blob) return toast('Could not create image.'); navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(function () { toast('Image copied to clipboard.'); }).catch(function () { toast('Could not copy image to clipboard.'); }); }); },
     exportData: function () { var backup = { exportFormat: 'captain-match-planner-local-snapshot', appVersion: APP_VERSION, schemaVersion: DB_SCHEMA_VERSION, storageBackend: state.storageBackend, exportedAt: nowIso(), data: clone(data) }; var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }); var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'captain-match-planner-v' + APP_VERSION.replace(/\./g, '_') + '-backup.json'; a.click(); URL.revokeObjectURL(a.href); },
     importDataPrompt: function () { var input = document.createElement('input'); input.type = 'file'; input.accept = '.json,application/json'; input.onchange = function () { var file = input.files[0]; if (!file) return; var reader = new FileReader(); reader.onload = function () { try { var parsed = JSON.parse(reader.result); var incoming = parsed && parsed.data && parsed.exportFormat ? parsed.data : parsed; data = migrateData(incoming); data.tournaments.forEach(function (t) { reconcileTournamentSchedule(t.id); }); state.activeTournamentId = preferredTournamentId() || (data.tournaments[0] && data.tournaments[0].id); var importedNext = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null; state.activeMatchId = importedNext ? importedNext.id : (data.matches[0] && data.matches[0].id); save().then(function () { render(); toast('Data imported into local database.'); }); } catch (e) { alert('Invalid JSON backup.'); } }; reader.readAsText(file); }; input.click(); }

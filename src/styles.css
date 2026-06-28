@@ -1282,3 +1282,77 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
   .tournament-actions { width:100%; justify-content:stretch; }
   .tournament-actions .btn { width:100%; }
 }
+
+/* v4.01: installable app polish, tournament redesign, compact roster, data view */
+.nav { grid-template-columns: repeat(5, 1fr); width: min(760px, calc(100vw - 24px)); }
+.tournament-page.redesigned { gap: 14px; }
+.tournament-command.compact { overflow: visible; }
+.tournament-top-row { gap: 14px; }
+.tournament-actions { flex: 1 1 420px; min-width: 0; }
+.compact-tournament-selector { flex: 1 1 320px; min-width: min(360px, 100%); }
+.setup-summary-card, .setup-edit-card { overflow: visible; }
+.setup-summary-grid { display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap:10px; margin-top: 12px; }
+.setup-summary-grid div { border:1px solid var(--line); background:#fff; border-radius:16px; padding:11px; min-width:0; }
+.setup-summary-grid span { display:block; color:var(--muted); font-size:11px; font-weight:950; text-transform:uppercase; letter-spacing:.05em; }
+.setup-summary-grid strong { display:block; margin-top:4px; color:#0b3f9c; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.compact-tabs { background:#f3f7ff; padding:4px; border-radius:16px; border:1px solid var(--line); }
+.compact-tabs button { padding:8px 12px; border-radius:12px; }
+.schedule-card { overflow: visible; }
+.schedule-table { display:grid; gap:8px; margin-top:14px; width:100%; }
+.schedule-card-head, .schedule-card-row { display:grid; gap:8px; align-items:center; border:1px solid var(--line); border-radius:16px; padding:10px; background:#fff; min-width:0; }
+.schedule-card-head { background:#f2f7ff; color:#41516f; font-size:12px; font-weight:1000; text-transform:uppercase; letter-spacing:.05em; }
+.schedule-card-head.summary, .schedule-summary-row { grid-template-columns: 64px minmax(160px,1.2fr) minmax(150px,.9fr) 108px minmax(190px,1fr); }
+.schedule-card-head.full, .schedule-full-row { grid-template-columns: 78px minmax(190px,1.2fr) 140px 108px minmax(130px,.75fr) minmax(130px,.75fr) minmax(110px,.7fr) minmax(260px,1fr); }
+.schedule-card-row input, .schedule-card-row select { padding:8px 9px; border-radius:12px; font-size:13px; min-width:0; }
+.schedule-card-row .badge { margin: 3px 4px 0 0; }
+.compact-actions { gap:6px; justify-content:flex-end; }
+.compact-actions .btn { white-space:nowrap; }
+.muted-cell { color:var(--muted); font-weight:900; }
+.tournament-item.archived { opacity:.62; filter:grayscale(.25); }
+
+.roster-matrix-row { display:grid; grid-template-columns: 42px minmax(120px,1fr) minmax(270px,1.6fr) 128px; gap:10px; align-items:center; border:1px solid var(--line); border-radius:16px; background:#fff; padding:9px 10px; }
+.roster-matrix-row.goalie-capable { background:linear-gradient(135deg,#ffffff,#f4fff7); border-color:#b7ecc8; }
+.roster-matrix-row.support-player { background:linear-gradient(135deg,#fffaf0,#fff7e6); border-color:#f7c873; }
+.roster-identity { min-width:0; }
+.roster-identity .player-title { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mini-meta { gap:5px; margin-top:3px; }
+.skill-mini-grid { display:grid; grid-template-columns: repeat(5, minmax(45px,1fr)); gap:5px; }
+.skill-mini { border:1px solid var(--line); border-radius:12px; background:#fff; display:flex; align-items:center; justify-content:space-between; gap:4px; padding:6px 7px; min-width:0; }
+.skill-mini b { font-size:10px; color:#42526e; }
+.skill-mini em { font-style:normal; font-size:12px; font-weight:1000; color:#0b3f9c; }
+.skill-mini.greyed { opacity:.48; filter:grayscale(.3); }
+.skill-mini.primary { border-color:#9ec4ff; background:#f0f6ff; }
+.skill-mini.starpos { border-color:#ffc43b; background:#fff9dd; }
+.roster-matrix-row .roster-actions { display:grid; grid-template-columns: 40px 40px 40px; gap:6px; align-items:center; }
+.roster-matrix-row .glove-button, .roster-matrix-row .x-button { min-height:36px; border-radius:12px; }
+.confirm-player-list .item { align-items:center; }
+.minute-pill { display:inline-flex; border:1px solid #9ec4ff; color:#0b4ab8; background:#eff6ff; border-radius:999px; padding:6px 9px; font-size:12px; font-weight:1000; }
+.minutes-toggle { color:#41516f; font-weight:900; }
+
+.data-layout { display:grid; grid-template-columns: 260px minmax(0,1fr); gap:16px; }
+.data-table-list { display:grid; gap:8px; }
+.data-table-btn { width:100%; border:1px solid var(--line); background:#fff; color:var(--ink); border-radius:14px; padding:10px 12px; display:flex; justify-content:space-between; gap:8px; font-weight:900; }
+.data-table-btn.active { border-color:var(--blue); background:#eaf3ff; color:#0b4ab8; }
+.data-table-wrap { overflow:auto; border:1px solid var(--line); border-radius:16px; max-height:62vh; background:#fff; }
+.data-table-wrap table { border-collapse:collapse; width:100%; min-width:760px; }
+.data-table-wrap th, .data-table-wrap td { border-bottom:1px solid #edf2f7; padding:8px 9px; text-align:left; vertical-align:top; font-size:12px; }
+.data-table-wrap th { position:sticky; top:0; background:#f2f7ff; color:#41516f; text-transform:uppercase; font-size:11px; z-index:1; }
+.data-table-wrap details { max-width:360px; }
+.data-table-wrap pre { max-height:240px; overflow:auto; background:#0f172a; color:#e2e8f0; border-radius:12px; padding:10px; white-space:pre-wrap; word-break:break-word; }
+
+@media (max-width: 980px) {
+  .setup-summary-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .schedule-card-head { display:none; }
+  .schedule-summary-row, .schedule-full-row { grid-template-columns: 1fr; align-items:start; }
+  .compact-actions { justify-content:flex-start; }
+  .roster-matrix-row { grid-template-columns: 42px minmax(0,1fr); }
+  .skill-mini-grid, .roster-matrix-row .roster-actions { grid-column: 1 / -1; }
+  .data-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .nav { width: calc(100vw - 12px); gap:4px; padding:6px; }
+  .nav button { font-size:11px; padding:8px 3px; }
+  .setup-summary-grid { grid-template-columns: 1fr; }
+  .skill-mini-grid { grid-template-columns: repeat(5, minmax(38px,1fr)); }
+  .skill-mini { padding:5px; flex-direction:column; }
+}
