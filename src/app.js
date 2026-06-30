@@ -3,7 +3,7 @@
   var DB_NAME = "captain_match_planner_local_db";
   var DB_VERSION = 3;
   var DB_SCHEMA_VERSION = 6;
-  var APP_VERSION = "4.04";
+  var APP_VERSION = "4.05";
   var POS_KEYS = ["forward", "wing", "center", "defense", "goalie"];
   var POS_SHORT = { forward: "FWD", wing: "WNG", center: "CTR", defense: "DEF", goalie: "GK" };
   var POS_FULL = { forward: "Forward", wing: "Wing", center: "Center", defense: "Defense", goalie: "Goalie" };
@@ -1478,9 +1478,9 @@
     return fitScore(ctx, slot || { position: position, role: roleForPosition(position, formation) }, "positional");
   }
   function rotationConfig(style) {
-    if (style === "competitive") return { skill: 1.25, minutesIn: 7, minutesOut: 5, protectLow: 5, firstUseBonus: 180, supportPenalty: 60, recentPenalty: 140, label: "Competitive" };
-    if (style === "fair") return { skill: 0.78, minutesIn: 24, minutesOut: 14, protectLow: 18, firstUseBonus: 360, supportPenalty: 120, recentPenalty: 260, label: "Fair minutes" };
-    return { skill: 1.0, minutesIn: 18, minutesOut: 10, protectLow: 12, firstUseBonus: 300, supportPenalty: 90, recentPenalty: 200, label: "Balanced" };
+    if (style === "competitive") return { skill: 1.25, minutesIn: 7, minutesOut: 5, protectLow: 5, firstUseBonus: 180, supportPenalty: 60, recentPenalty: 140, repeatOutPenalty: 260, defCoverBonus: 80, defRestBonus: 40, label: "Competitive" };
+    if (style === "fair") return { skill: 0.78, minutesIn: 24, minutesOut: 14, protectLow: 18, firstUseBonus: 360, supportPenalty: 120, recentPenalty: 260, repeatOutPenalty: 820, defCoverBonus: 360, defRestBonus: 260, label: "Fair minutes" };
+    return { skill: 1.0, minutesIn: 18, minutesOut: 10, protectLow: 12, firstUseBonus: 300, supportPenalty: 90, recentPenalty: 200, repeatOutPenalty: 700, defCoverBonus: 300, defRestBonus: 220, label: "Balanced" };
   }
 
   function plannedHorizon(match) {
@@ -1497,7 +1497,7 @@
     if (!ids.length) return 0;
     return (6 * plannedHorizon(match)) / ids.length;
   }
-  function scoreSubCandidate(match, inCtx, outCtx, slot, minutesSoFar, changedRoles, recentIn, config) {
+  function scoreSubCandidate(match, inCtx, outCtx, slot, minutesSoFar, changedRoles, recentIn, config, outCounts, allowDefenseRotation) {
     if (!inCtx || !outCtx || !slot || slot.position === "GK") return -Infinity;
     var inSkill = roleSkill(inCtx, slot.role);
     var outSkill = roleSkill(outCtx, slot.role);
@@ -1507,17 +1507,30 @@
     var target = averageTargetMinutes(match);
     var inMins = minutesSoFar[inCtx.matchPlayer.id] || 0;
     var outMins = minutesSoFar[outCtx.matchPlayer.id] || 0;
+    var previousOuts = (outCounts && outCounts[outCtx.matchPlayer.id]) || 0;
+    var strongDefenseCover = slot.role === "defense" && inSkill >= 4;
     score += Math.max(0, target - inMins) * config.minutesIn;
     score += Math.max(0, outMins - target) * config.minutesOut;
     score -= Math.max(0, target - outMins) * (config.protectLow || 8);
     if (inMins <= 0) score += config.firstUseBonus || 260;
     if (outMins >= target + 5) score += 110;
+    if (previousOuts > 0) score -= (config.repeatOutPenalty || 600) * previousOuts;
+    else if ((match.rotationStyle || "balanced") !== "competitive") score += 85;
     if (slot.role === "wing") score += 80;
     if (slot.role === "forward") score += 30;
     if (slot.role === "center") score -= 35;
-    if (slot.role === "defense") score -= 45;
+    if (slot.role === "defense") {
+      if (allowDefenseRotation && strongDefenseCover) {
+        score += config.defCoverBonus || 260;
+        if (previousOuts === 0) score += config.defRestBonus || 180;
+        if (outMins >= target - 10) score += 120;
+      } else {
+        score -= 95;
+      }
+    }
     if (changedRoles.defense && slot.role === "defense") score -= 1000;
-    if ((slot.role === "center" || slot.role === "defense") && changedRoles.core >= 1) score -= 650;
+    if (slot.role === "center" && changedRoles.core >= 1) score -= 650;
+    if (slot.role === "defense" && changedRoles.core >= 1) score -= (allowDefenseRotation && strongDefenseCover) ? 220 : 650;
     if (recentIn[outCtx.matchPlayer.id]) score -= config.recentPenalty;
     if (inCtx.membership === "team" && outCtx.membership === "support") score += 120;
     if (inCtx.membership === "support" && outCtx.membership === "team") {
@@ -1588,6 +1601,9 @@
     var lastMinute = 0;
     var config = rotationConfig(match.rotationStyle || "balanced");
     var recentIn = {};
+    var outCounts = {};
+    active.forEach(function (p) { outCounts[p.id] = 0; });
+    var allowDefenseRotation = initialBench.length >= 2 && (match.rotationStyle || "balanced") !== "competitive";
     var splitKeeperRow = buildSplitKeeperSub(match);
     match.subs = [];
     activeWindows.forEach(function (w, wIndex) {
@@ -1620,7 +1636,7 @@
             var outId = preWindow[slot.position];
             if (!outId || preFieldIds.indexOf(outId) < 0 || alreadyOutThisWindow[outId] || alreadyInThisWindow[outId]) return;
             var outCtx = allById[outId];
-            var score = scoreSubCandidate(match, inCtx, outCtx, slot, minutesSoFar, changedRoles, recentIn, config);
+            var score = scoreSubCandidate(match, inCtx, outCtx, slot, minutesSoFar, changedRoles, recentIn, config, outCounts, allowDefenseRotation);
             if (!best || score > best.score) best = { inId: inId, outId: outId, position: slot.position, score: score, role: slot.role };
           });
         });
@@ -1634,7 +1650,11 @@
         changedRoles[best.role] = true;
         if (best.role === "center" || best.role === "defense") changedRoles.core = (changedRoles.core || 0) + 1;
       }
-      windowRows.forEach(function (row) { if (plan.indexOf(row) < 0) plan.push(row); applySubToLineup(match, current, row); });
+      windowRows.forEach(function (row) {
+        if (plan.indexOf(row) < 0) plan.push(row);
+        if (row.playerOutId && outCounts[row.playerOutId] !== undefined && !row.keeperChange) outCounts[row.playerOutId] += 1;
+        applySubToLineup(match, current, row);
+      });
     });
     match.subs = plan.sort(function (a, b) { var wa = (match.subWindows || []).find(function (w) { return w.id === a.windowId; }); var wb = (match.subWindows || []).find(function (w) { return w.id === b.windowId; }); return Number(wa && wa.minute || 0) - Number(wb && wb.minute || 0) || (a.order || 0) - (b.order || 0); });
     if ((match.subWindows || []).some(function (w) { return w.live; })) match.strategyNote = match.strategyNote || defaultStrategyNote();
@@ -2347,10 +2367,11 @@
     var active = activeMatchPlayers(match.id);
     var gkIds = goalkeeperIdsForPlan(match);
     var outfield = active.filter(function (mp) { return !gkIds[mp.id]; });
-    var target = outfield.length ? 300 / outfield.length : 0;
+    var plannedAvg = outfield.length ? (6 * plannedHorizon(match)) / outfield.length : 0;
+    var targetFloor = Math.max(0, plannedAvg - 10);
     outfield.forEach(function (mp) {
-      var full = Math.round((bundle.full && bundle.full[mp.id]) || 0);
-      if (target && full <= target - 10) warnings.push({ level: 'warn', title: playerContext(mp).name + ' is below target minutes', detail: full + ' min vs ' + Math.round(target) + ' min outfield average.' });
+      var planned = Math.round((bundle.planned && bundle.planned[mp.id]) || 0);
+      if (targetFloor && planned < targetFloor) warnings.push({ level: 'warn', title: playerContext(mp).name + ' is below target minutes', detail: planned + ' planned min vs ' + Math.round(targetFloor) + ' min target floor.' });
     });
     Object.keys(gkIds).forEach(function (id) {
       var mp = data.matchPlayers.find(function (p) { return p.id === id; });
@@ -2368,6 +2389,7 @@
       var usedInitial = initialBench.filter(function (id) { return firstIn.indexOf(id) >= 0; }).length;
       if (usedInitial < expected) warnings.push({ level: 'warn', title: 'First window does not bring in all bench players', detail: 'Expected ' + expected + ', found ' + usedInitial + '.' });
     }
+    var outHistory = {};
     orderedSubWindows(match).forEach(function (w) {
       if (w.live) return;
       var before = lineupBeforeWindow(match, w.id);
@@ -2388,8 +2410,12 @@
         var role = roleForPosition(pos, match.formation);
         if (role === 'defense') defChanges++;
         if ((pos === 'GK' || (s.position || pos) === 'GK') && (match.keeperPlan || 'fixed') === 'fixed') warnings.push({ level: 'warn', title: 'GK change found while keeper plan is fixed', detail: 'Use Split halves or Manual if this is intentional.' });
+        if (s.playerOutId && !gkIds[s.playerOutId]) outHistory[s.playerOutId] = (outHistory[s.playerOutId] || 0) + 1;
       });
       if (defChanges > 1) warnings.push({ level: 'warn', title: 'Multiple defenders changed at ' + w.label, detail: 'Avoid changing both defenders in the same window when possible.' });
+    });
+    Object.keys(outHistory).forEach(function (id) {
+      if (outHistory[id] > 1) warnings.push({ level: 'warn', title: playerNameById(id) + ' is taken out multiple times', detail: 'Balanced/Fair plans should rotate rest across other eligible outfield players when possible.' });
     });
     var lineup = lineupFor(match);
     (FORMATIONS[match.formation] || FORMATIONS['2-3-1']).forEach(function (slot) {
@@ -2432,23 +2458,25 @@
     var bundle = highlights.bundle;
     var gkIds = goalkeeperIdsForPlan(match);
     var outfield = active.filter(function (mp) { return !gkIds[mp.id]; });
-    var avg = outfield.length ? 300 / outfield.length : 0;
+    var plannedAvg = outfield.length ? (6 * plannedHorizon(match)) / outfield.length : 0;
+    var targetFloor = Math.max(0, plannedAvg - 10);
     var live = bundle.liveFinal;
     var rows = active.slice().sort(function (a, b) { return (a.signupOrder || 99) - (b.signupOrder || 99); }).map(function (mp) {
       var ctx = playerContext(mp);
       var planned = Math.round((bundle.planned && bundle.planned[mp.id]) || 0);
       var full = Math.round((bundle.full && bundle.full[mp.id]) || planned);
       var isGk = !!gkIds[mp.id];
-      var target = isGk ? goalkeeperTargetMinutes(match, mp.id) : avg;
-      var status = full <= target - 10 ? 'low' : full >= target + 10 && !isGk ? 'high' : 'ok';
+      var target = isGk ? goalkeeperTargetMinutes(match, mp.id) : targetFloor;
+      var status = isGk ? (full < target - 5 ? 'low' : 'ok') : (planned < target ? 'low' : planned >= plannedAvg + 10 ? 'high' : 'ok');
       var plannedPct = Math.max(0, Math.min(100, planned / 50 * 100));
       var fullPct = Math.max(plannedPct, Math.min(100, full / 50 * 100));
       var targetPct = Math.max(0, Math.min(100, target / 50 * 100));
       var minuteText = live ? planned + ' planned · ~' + full + ' all-in' : full + ' min';
-      return '<div class="time-row ' + status + (isGk ? ' gk-row' : '') + '" style="--planned:' + plannedPct + '%;--full:' + fullPct + '%;--target:' + targetPct + '%"><div class="time-player"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><strong>' + escapeHtml(ctx.name) + '</strong><span>' + (isGk ? 'GK target ' + Math.round(target) : 'Target ' + Math.round(avg)) + ' min</span></div></div><div class="time-track"><i class="allin"></i><i class="planned"></i><b></b></div><div class="time-value">' + escapeHtml(minuteText) + (status === 'low' ? '<em>Below target</em>' : '') + '</div></div>';
+      var targetText = isGk ? 'GK target ' + Math.round(target) + ' min' : 'Target floor ' + Math.round(targetFloor) + ' min';
+      return '<div class="time-row ' + status + (isGk ? ' gk-row' : '') + '" style="--planned:' + plannedPct + '%;--full:' + fullPct + '%;--target:' + targetPct + '%"><div class="time-player"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><strong>' + escapeHtml(ctx.name) + '</strong><span>' + escapeHtml(targetText) + '</span></div></div><div class="time-track"><i class="allin"></i><i class="planned"></i><b></b></div><div class="time-value">' + escapeHtml(minuteText) + (status === 'low' ? '<em>Below target</em>' : '') + '</div></div>';
     }).join('');
     var gkLabel = (match.keeperPlan || 'fixed') === 'split' ? 'GK half target: 25 min' : 'GK target: 50 min';
-    return '<div class="time-chart"><div class="time-chart-head"><strong>Playing time balance</strong><span>Outfield average target: ' + Math.round(avg) + ' min · ' + gkLabel + '</span></div>' + rows + '</div>';
+    return '<div class="time-chart"><div class="time-chart-head"><strong>Playing time balance</strong><span>Outfield target floor: ' + Math.round(targetFloor) + ' min · planned avg ' + Math.round(plannedAvg) + ' min · ' + gkLabel + '</span></div>' + rows + '</div>';
   }
   function renderCoachReadout(match, highlights) {
     if (!hasLineupData(match)) return 'Generate the plan to see the coach readout.';

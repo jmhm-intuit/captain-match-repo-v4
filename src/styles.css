@@ -1500,3 +1500,37 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .poster-sub-row .sub-arrow { justify-content:flex-start; min-height:auto; }
 .share-window { overflow: visible; }
 .share-live, .poster-footer span { white-space: normal; overflow-wrap: anywhere; line-height:1.35; }
+
+/* v4.05: compact share substitutions and planned-minute target floor */
+.poster-timeline .poster-sub-row {
+  grid-template-columns: minmax(0, 1fr) 58px minmax(0, 1fr) !important;
+  gap: 8px;
+  align-items: center;
+}
+.poster-timeline .poster-sub-row .mini-person {
+  min-height: 54px;
+  min-width: 0;
+}
+.poster-timeline .poster-sub-row .mini-person span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.poster-timeline .poster-sub-row .sub-arrow {
+  display: grid;
+  place-items: center;
+  min-height: 38px;
+  height: 38px;
+  border-radius: 999px;
+  padding: 0 8px;
+  background: linear-gradient(135deg,#ffd33d,#ff9f1c);
+  color: #082a7a;
+  text-shadow: none;
+  font-weight: 1000;
+}
+@media (max-width: 520px) {
+  .poster-timeline .poster-sub-row {
+    grid-template-columns: minmax(0, 1fr) 52px minmax(0, 1fr) !important;
+    gap: 6px;
+  }
+}
