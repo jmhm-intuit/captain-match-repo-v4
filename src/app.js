@@ -2,8 +2,8 @@
   var STORAGE_KEY = "squadflow_captain_v2_local";
   var DB_NAME = "captain_match_planner_local_db";
   var DB_VERSION = 3;
-  var DB_SCHEMA_VERSION = 5;
-  var APP_VERSION = "4.03";
+  var DB_SCHEMA_VERSION = 6;
+  var APP_VERSION = "4.04";
   var POS_KEYS = ["forward", "wing", "center", "defense", "goalie"];
   var POS_SHORT = { forward: "FWD", wing: "WNG", center: "CTR", defense: "DEF", goalie: "GK" };
   var POS_FULL = { forward: "Forward", wing: "Wing", center: "Center", defense: "Defense", goalie: "Goalie" };
@@ -43,7 +43,7 @@
       { id: "w_16", label: "At 16 min", minute: 16, live: false, targetSubs: "" },
       { id: "w_half", label: "At Half", minute: 25, live: false, targetSubs: "" },
       { id: "w_sh8", label: "Second half +8", minute: 33, live: false, targetSubs: "" },
-      { id: "w_sh16", label: "Second half +16", minute: 41, live: false, targetSubs: "" }
+      { id: "w_last8", label: "Last 8 min", minute: 42, live: true, targetSubs: "" }
     ],
     simple: [
       { id: "w_half", label: "At Half", minute: 25, live: false, targetSubs: "" },
@@ -708,6 +708,8 @@
       if (!m.suggestMode || m.suggestMode === "strongest") m.suggestMode = "positional";
       if (m.suggestMode === "fairness") m.suggestMode = "signup";
       if (!m.rotationStyle) m.rotationStyle = "balanced";
+      if (!m.keeperPlan) m.keeperPlan = "fixed";
+      if (m.keeperPlan !== "fixed" && m.keeperPlan !== "split" && m.keeperPlan !== "manual") m.keeperPlan = "fixed";
       if (!m.subTiming) m.subTiming = inferSubTiming(m);
       if (!m.finalPhase) m.finalPhase = hasLiveFinalWindow(m) ? "live" : "planned";
       if (m.finalPhase !== "live" && m.finalPhase !== "planned") m.finalPhase = "live";
@@ -777,19 +779,29 @@
     var sorted = windows.slice().sort(function (a, b) { return Number(a.minute || 0) - Number(b.minute || 0); });
     return sorted.filter(function (w) { return Number(w.minute || 0) >= 37; })[0] || null;
   }
+  function finalPhaseConfig(match) {
+    var timing = (match && (match.subTiming || inferSubTiming(match))) || "standard";
+    return timing === "heavy" ? { minute: 42, label: "Last 8 min", text: "final 8" } : { minute: 38, label: "Last 12 min", text: "final 12" };
+  }
   function applyFinalPhaseMode(match, mode, quiet) {
     if (!match) return;
     match.finalPhase = mode === "planned" ? "planned" : "live";
     match.subWindows = Array.isArray(match.subWindows) ? match.subWindows : clone(TEMPLATES.balanced);
+    var cfg = finalPhaseConfig(match);
     var fw = finalWindow(match);
     if (!fw) {
-      fw = { id: uid("w"), label: "Last 12 min", minute: 38, live: match.finalPhase === "live", targetSubs: "" };
+      fw = { id: uid("w"), label: cfg.label, minute: cfg.minute, live: match.finalPhase === "live", targetSubs: "" };
       match.subWindows.push(fw);
     }
+    var standardFinal = /^(Last 12 min|Last 8 min|Second half \+16|Custom live phase)$/i.test(fw.label || "") || fw.id === "w_last" || fw.id === "w_last8" || fw.id === "w_sh16";
+    if (standardFinal) {
+      fw.label = cfg.label;
+      fw.minute = cfg.minute;
+    }
     fw.live = match.finalPhase === "live";
-    if (match.finalPhase === "live") fw.label = fw.label || "Last 12 min";
-    if (!quiet) { match.subs = (match.subs || []).filter(function (s) { return s.windowId !== fw.id || !fw.live; }); }
+    if (!quiet) { match.subs = (match.subs || []).filter(function (sub) { return sub.windowId !== fw.id || !fw.live; }); }
   }
+
   function hasMatchUserData(m, matchPlayersOverride) {
     if (!m) return false;
     var allMatchPlayers = matchPlayersOverride || ((typeof data !== 'undefined' && data && data.matchPlayers) ? data.matchPlayers : []);
@@ -894,7 +906,7 @@
     return {
       id: uid("match"), tournamentId: tournamentId, title: opponent ? "vs " + opponent : "Match",
       date: date || nextWeekdayDate(t && t.defaultDay), time: time || "", opponent: opponent || "",
-      location: t ? (t.location || "") : "", formation: lastFormation(tournamentId) || "2-3-1", suggestMode: "positional", rotationStyle: "balanced", subTiming: "standard", finalPhase: "live",
+      location: t ? (t.location || "") : "", formation: lastFormation(tournamentId) || "2-3-1", suggestMode: "positional", rotationStyle: "balanced", keeperPlan: "fixed", subTiming: "standard", finalPhase: "live",
       status: "draft", scoreFor: null, scoreAgainst: null, result: "", rawRosterText: "", matchImportSummary: null,
       lineup: {}, subWindows: clone(TEMPLATES.balanced), subs: [], strategyNote: defaultStrategyNote(), showMinutes: false,
       createdAt: nowIso(), updatedAt: nowIso(), generatedFromTournament: false
@@ -950,7 +962,7 @@
   }
   function createMatchSeed(tId, date, index) {
     var t = (data && data.tournaments) ? data.tournaments.find(function (x) { return x.id === tId; }) : null;
-    return { id: uid("match"), tournamentId: tId, title: "Match " + (index + 1), date: date, time: "", opponent: "", location: t ? (t.location || "") : "", formation: index === 0 ? "2-3-1" : "2-3-1", suggestMode: "positional", rotationStyle: "balanced", subTiming: "standard", finalPhase: "live", status: "draft", scoreFor: null, scoreAgainst: null, result: "", rawRosterText: "", matchImportSummary: null, lineup: {}, subWindows: clone(TEMPLATES.balanced), subs: [], strategyNote: defaultStrategyNote(), showMinutes: false, createdAt: nowIso(), updatedAt: nowIso(), generatedFromTournament: true };
+    return { id: uid("match"), tournamentId: tId, title: "Match " + (index + 1), date: date, time: "", opponent: "", location: t ? (t.location || "") : "", formation: index === 0 ? "2-3-1" : "2-3-1", suggestMode: "positional", rotationStyle: "balanced", keeperPlan: "fixed", subTiming: "standard", finalPhase: "live", status: "draft", scoreFor: null, scoreAgainst: null, result: "", rawRosterText: "", matchImportSummary: null, lineup: {}, subWindows: clone(TEMPLATES.balanced), subs: [], strategyNote: defaultStrategyNote(), showMinutes: false, createdAt: nowIso(), updatedAt: nowIso(), generatedFromTournament: true };
   }
 
   function playerContext(matchPlayer) {
@@ -1183,26 +1195,41 @@
     return !!(ctx.tournamentGoalie || ctx.goalieEligible || (ctx.skills && Number(ctx.skills.goalie || 0) >= 3));
   }
   function subRequiresGkCapable(match, sub, nextInId, nextOutId, nextPosition) {
-    var before = lineupBeforeSub(match, sub.id);
+    var before = lineupBeforeWindow(match, sub.windowId);
     var outPos = positionOfPlayer(before, nextOutId);
     var targetPos = nextPosition || sub.position || outPos;
     return outPos === 'GK' || targetPos === 'GK';
   }
   function validateSubChoice(match, sub, nextInId, nextOutId, nextPosition) {
+    if (!match || !sub) return false;
+    var rows = orderedSubsInWindow(match, sub.windowId).filter(function (r) { return r.id !== sub.id; });
+    var usedIn = rows.map(function (r) { return r.playerInId; }).filter(Boolean);
+    var usedOut = rows.map(function (r) { return r.playerOutId; }).filter(Boolean);
+    var beforeWindow = lineupBeforeWindow(match, sub.windowId);
+    var benchAtWindow = benchPlayersForLineup(match, beforeWindow).map(function (p) { return p.id; });
+    var fieldAtWindow = idsOnField(beforeWindow);
+    if (nextInId && benchAtWindow.indexOf(nextInId) < 0) { toast('Incoming player must be on the bench before this window.'); return false; }
+    if (nextOutId && fieldAtWindow.indexOf(nextOutId) < 0) { toast('Outgoing player must be on the field before this window.'); return false; }
+    if (nextInId && usedOut.indexOf(nextInId) >= 0) { toast('A player taken out cannot also go in during the same window.'); return false; }
+    if (nextOutId && usedIn.indexOf(nextOutId) >= 0) { toast('A player going in cannot also go out during the same window.'); return false; }
+    if (nextInId && usedIn.indexOf(nextInId) >= 0) { toast('This incoming player is already used in this window.'); return false; }
+    if (nextOutId && usedOut.indexOf(nextOutId) >= 0) { toast('This outgoing player is already used in this window.'); return false; }
+    if (nextInId && nextOutId && nextInId === nextOutId) { toast('Incoming and outgoing player cannot be the same.'); return false; }
     if (subRequiresGkCapable(match, sub, nextInId, nextOutId, nextPosition) && !matchPlayerGkCapable(nextInId)) {
       toast('Goalkeeper substitutions require the incoming player to be GK-capable.');
       return false;
     }
     return true;
   }
+
   function subPositionLabel(match, sub) {
-    var before = lineupBeforeSub(match, sub.id);
+    var before = lineupBeforeWindow(match, sub.windowId);
     var outPos = positionOfPlayer(before, sub.playerOutId);
     var targetPos = sub.position || outPos || 'POS';
     return sub.manualPosition && outPos && targetPos !== outPos ? targetPos + ' ↔ ' + outPos : targetPos;
   }
   function positionOverrideOptions(match, sub) {
-    var before = lineupBeforeSub(match, sub.id);
+    var before = lineupBeforeWindow(match, sub.windowId);
     var selected = sub.position || positionOfPlayer(before, sub.playerOutId) || '';
     return (FORMATIONS[match.formation] || FORMATIONS['2-3-1']).map(function (slot) {
       var mp = before[slot.position] ? data.matchPlayers.find(function (p) { return p.id === before[slot.position]; }) : null;
@@ -1214,19 +1241,24 @@
   function candidateInPlayers(match, sub) {
     var beforeWindow = lineupBeforeWindow(match, sub.windowId);
     var benchAtWindow = benchPlayersForLineup(match, beforeWindow).map(function (p) { return p.id; });
-    var earlierInThisWindow = orderedSubsInWindow(match, sub.windowId)
-      .filter(function (r) { return (r.order || 0) < (sub.order || 0) && r.playerInId; })
-      .map(function (r) { return r.playerInId; });
-    var allowed = benchAtWindow.filter(function (id) { return earlierInThisWindow.indexOf(id) < 0; });
+    var rows = orderedSubsInWindow(match, sub.windowId).filter(function (r) { return r.id !== sub.id; });
+    var usedIn = rows.map(function (r) { return r.playerInId; }).filter(Boolean);
+    var usedOut = rows.map(function (r) { return r.playerOutId; }).filter(Boolean);
+    var allowed = benchAtWindow.filter(function (id) { return usedIn.indexOf(id) < 0 && usedOut.indexOf(id) < 0; });
     if (sub.playerInId && allowed.indexOf(sub.playerInId) < 0) allowed.unshift(sub.playerInId);
     return activeMatchPlayers(match.id).filter(function (mp) { return allowed.indexOf(mp.id) >= 0; });
   }
+
   function candidateOutPlayers(match, sub) {
-    var beforeRow = lineupBeforeSub(match, sub.id);
+    var beforeWindow = lineupBeforeWindow(match, sub.windowId);
+    var rows = orderedSubsInWindow(match, sub.windowId).filter(function (r) { return r.id !== sub.id; });
+    var usedOut = rows.map(function (r) { return r.playerOutId; }).filter(Boolean);
+    var usedIn = rows.map(function (r) { return r.playerInId; }).filter(Boolean);
     var regular = [];
     var keepers = [];
-    idsOnField(beforeRow).forEach(function (id) {
-      var pos = positionOfPlayer(beforeRow, id);
+    idsOnField(beforeWindow).forEach(function (id) {
+      if (usedOut.indexOf(id) >= 0 || usedIn.indexOf(id) >= 0) return;
+      var pos = positionOfPlayer(beforeWindow, id);
       if (pos === 'GK') keepers.push(id);
       else regular.push(id);
     });
@@ -1234,6 +1266,7 @@
     if (sub.playerOutId && ids.indexOf(sub.playerOutId) < 0) ids.push(sub.playerOutId);
     return ids.map(function (id) { return activeMatchPlayers(match.id).find(function (mp) { return mp.id === id; }); }).filter(Boolean);
   }
+
   function chooseBestOutForIn(match, current, inId, blockedOut) {
     blockedOut = blockedOut || {};
     var inMp = data.matchPlayers.find(function (p) { return p.id === inId; });
@@ -1445,10 +1478,11 @@
     return fitScore(ctx, slot || { position: position, role: roleForPosition(position, formation) }, "positional");
   }
   function rotationConfig(style) {
-    if (style === "competitive") return { skill: 1.25, minutesIn: 7, minutesOut: 4, supportPenalty: 60, recentPenalty: 140, label: "Competitive" };
-    if (style === "fair") return { skill: 0.78, minutesIn: 19, minutesOut: 11, supportPenalty: 120, recentPenalty: 260, label: "Fair minutes" };
-    return { skill: 1.0, minutesIn: 13, minutesOut: 8, supportPenalty: 90, recentPenalty: 200, label: "Balanced" };
+    if (style === "competitive") return { skill: 1.25, minutesIn: 7, minutesOut: 5, protectLow: 5, firstUseBonus: 180, supportPenalty: 60, recentPenalty: 140, label: "Competitive" };
+    if (style === "fair") return { skill: 0.78, minutesIn: 24, minutesOut: 14, protectLow: 18, firstUseBonus: 360, supportPenalty: 120, recentPenalty: 260, label: "Fair minutes" };
+    return { skill: 1.0, minutesIn: 18, minutesOut: 10, protectLow: 12, firstUseBonus: 300, supportPenalty: 90, recentPenalty: 200, label: "Balanced" };
   }
+
   function plannedHorizon(match) {
     if (!match || match.finalPhase !== "live") return 50;
     var fw = finalWindow(match);
@@ -1474,7 +1508,10 @@
     var inMins = minutesSoFar[inCtx.matchPlayer.id] || 0;
     var outMins = minutesSoFar[outCtx.matchPlayer.id] || 0;
     score += Math.max(0, target - inMins) * config.minutesIn;
-    score += Math.max(0, outMins - target * 0.55) * config.minutesOut;
+    score += Math.max(0, outMins - target) * config.minutesOut;
+    score -= Math.max(0, target - outMins) * (config.protectLow || 8);
+    if (inMins <= 0) score += config.firstUseBonus || 260;
+    if (outMins >= target + 5) score += 110;
     if (slot.role === "wing") score += 80;
     if (slot.role === "forward") score += 30;
     if (slot.role === "center") score -= 35;
@@ -1495,6 +1532,33 @@
     if (inSkill <= 2) score -= 180;
     return score;
   }
+
+  function ensureHeavyRotationIfNeeded(match, benchCount) {
+    if (!match || benchCount <= 3) return false;
+    if (match.subTiming === "custom") return false;
+    if (match.subTiming !== "heavy" || inferSubTiming(match) !== "heavy") {
+      match.subTiming = "heavy";
+      match.subWindows = clone(TEMPLATES.heavy);
+      applyFinalPhaseMode(match, match.finalPhase || "live", true);
+      match.subs = [];
+      return true;
+    }
+    return false;
+  }
+  function buildSplitKeeperSub(match) {
+    if ((match.keeperPlan || "fixed") !== "split") return null;
+    var initial = lineupFor(match);
+    var gkOut = initial.GK;
+    if (!gkOut) return null;
+    var half = orderedSubWindows(match).filter(function (w) { return !w.live; }).find(function (w) { return Number(w.minute || 0) >= 24 && Number(w.minute || 0) <= 26; });
+    if (!half) return null;
+    var bench = benchPlayersForLineup(match, initial).filter(function (mp) { return mp.id !== gkOut && matchPlayerGkCapable(mp.id); });
+    if (!bench.length) return null;
+    var incoming = bench.map(playerContext).sort(function (a, b) { return roleSkill(b, 'goalie') - roleSkill(a, 'goalie'); })[0];
+    if (!incoming) return null;
+    return { id: uid("sub"), matchId: match.id, windowId: half.id, playerInId: incoming.matchPlayer.id, playerOutId: gkOut, position: "GK", manualPosition: false, order: 0, keeperChange: true };
+  }
+
   function suggestSubs(matchId) {
     var match = data.matches.find(function (m) { return m.id === matchId; });
     if (!match) return;
@@ -1503,14 +1567,15 @@
     var active = activeMatchPlayers(matchId);
     var startingIds = idsOnField(lineupFor(match));
     if (startingIds.length < Math.min(7, active.length)) return toast("Build a starting lineup first.");
-    var windows = orderedSubWindows(match);
-    var activeWindows = windows.filter(function (w) { return !w.live; });
     var initialBench = benchPlayersForLineup(match, lineupFor(match));
     if (!initialBench.length) {
       match.subs = [];
       save(); render(); toast("No bench players for subs.");
       return;
     }
+    var switchedHeavy = ensureHeavyRotationIfNeeded(match, initialBench.length);
+    var windows = orderedSubWindows(match);
+    var activeWindows = windows.filter(function (w) { return !w.live; });
     if (!activeWindows.length) return toast("Add at least one fixed substitution window.");
     var all = active.map(playerContext);
     var allById = {};
@@ -1523,62 +1588,74 @@
     var lastMinute = 0;
     var config = rotationConfig(match.rotationStyle || "balanced");
     var recentIn = {};
+    var splitKeeperRow = buildSplitKeeperSub(match);
     match.subs = [];
     activeWindows.forEach(function (w, wIndex) {
       var minute = Math.max(0, Math.min(50, Number(w.minute || 0)));
       addMinutes(current, minutesSoFar, minute - lastMinute);
       lastMinute = minute;
       var override = w.targetSubs !== undefined && w.targetSubs !== "" && w.targetSubs !== null;
-      var desired = override ? Number(w.targetSubs) : desiredSubsForWindow(benchCount, wIndex, activeWindows.length, match.rotationStyle || "balanced");
+      var desired = Math.min(3, override ? Number(w.targetSubs) : desiredSubsForWindow(benchCount, wIndex, activeWindows.length, match.rotationStyle || "balanced"));
+      var preWindow = clone(current);
+      var preBenchIds = benchPlayersForLineup(match, preWindow).map(function (p) { return p.id; });
+      var preFieldIds = idsOnField(preWindow);
       var alreadyInThisWindow = {};
       var alreadyOutThisWindow = {};
       var changedRoles = { core: 0 };
+      var windowRows = [];
+      if (splitKeeperRow && splitKeeperRow.windowId === w.id) {
+        windowRows.push(splitKeeperRow);
+        alreadyInThisWindow[splitKeeperRow.playerInId] = true;
+        alreadyOutThisWindow[splitKeeperRow.playerOutId] = true;
+        recentIn[splitKeeperRow.playerInId] = true;
+      }
       for (var k = 0; k < desired; k++) {
-        var benchAtWindow = benchPlayersForLineup(match, current).map(function (p) { return p.id; });
-        var candidateIds = benchAtWindow.filter(function (id) { return !alreadyInThisWindow[id]; });
+        var candidateIds = preBenchIds.filter(function (id) { return !alreadyInThisWindow[id] && !alreadyOutThisWindow[id]; });
         if (!candidateIds.length) break;
         var best = null;
         candidateIds.forEach(function (inId) {
           var inCtx = allById[inId];
           formation.forEach(function (slot) {
             if (slot.position === "GK") return;
-            var outId = current[slot.position];
-            if (!outId || alreadyOutThisWindow[outId]) return;
+            var outId = preWindow[slot.position];
+            if (!outId || preFieldIds.indexOf(outId) < 0 || alreadyOutThisWindow[outId] || alreadyInThisWindow[outId]) return;
             var outCtx = allById[outId];
             var score = scoreSubCandidate(match, inCtx, outCtx, slot, minutesSoFar, changedRoles, recentIn, config);
             if (!best || score > best.score) best = { inId: inId, outId: outId, position: slot.position, score: score, role: slot.role };
           });
         });
         if (!best || !isFinite(best.score)) break;
-        var row = { id: uid("sub"), matchId: matchId, windowId: w.id, playerInId: best.inId, playerOutId: best.outId, position: best.position, manualPosition: false, order: plan.filter(function (x) { return x.windowId === w.id; }).length + 1 };
+        var row = { id: uid("sub"), matchId: matchId, windowId: w.id, playerInId: best.inId, playerOutId: best.outId, position: best.position, manualPosition: false, order: windowRows.length + 1 };
+        windowRows.push(row);
         plan.push(row);
-        match.subs.push(row);
-        applySubToLineup(match, current, row);
         alreadyInThisWindow[best.inId] = true;
         alreadyOutThisWindow[best.outId] = true;
         recentIn[best.inId] = true;
         changedRoles[best.role] = true;
         if (best.role === "center" || best.role === "defense") changedRoles.core = (changedRoles.core || 0) + 1;
       }
+      windowRows.forEach(function (row) { if (plan.indexOf(row) < 0) plan.push(row); applySubToLineup(match, current, row); });
     });
-    match.subs = plan;
+    match.subs = plan.sort(function (a, b) { var wa = (match.subWindows || []).find(function (w) { return w.id === a.windowId; }); var wb = (match.subWindows || []).find(function (w) { return w.id === b.windowId; }); return Number(wa && wa.minute || 0) - Number(wb && wb.minute || 0) || (a.order || 0) - (b.order || 0); });
     if ((match.subWindows || []).some(function (w) { return w.live; })) match.strategyNote = match.strategyNote || defaultStrategyNote();
-    save(); render(); toast("Substitution plan suggested with " + config.label.toLowerCase() + " rotation.");
+    save(); render(); toast((switchedHeavy ? "Heavy rotation applied. " : "") + "Substitution plan suggested with " + config.label.toLowerCase() + " rotation.");
   }
+
   function desiredSubsForWindow(benchCount, index, windowCount, style) {
     if (benchCount <= 0) return 0;
+    if (index === 0) return Math.min(3, benchCount);
     if (style === "competitive") {
-      if (benchCount === 1) return index === Math.floor(windowCount / 2) ? 1 : 0;
-      if (benchCount === 2) return index < 2 ? 1 : 0;
-      return index < Math.min(2, windowCount) ? Math.min(2, benchCount) : 1;
+      if (benchCount === 1) return index === 1 ? 1 : 0;
+      if (benchCount === 2) return index === 1 ? 1 : 0;
+      return index < windowCount - 1 ? Math.min(2, benchCount) : 1;
     }
-    if (benchCount === 1) return index === Math.floor(windowCount / 2) ? 1 : 0;
-    if (benchCount === 2) return index < 2 ? 2 : 0;
-    if (benchCount === 3) return index === 0 ? 2 : index === 1 ? (style === "fair" ? 3 : 2) : (style === "fair" ? 1 : 0);
-    var base = Math.ceil(benchCount / Math.max(1, Math.min(windowCount, style === "fair" ? 3 : 2)));
-    if (style === "fair") return Math.min(3, Math.max(1, base));
-    return index < 2 ? Math.min(3, base) : Math.min(2, Math.max(0, benchCount - base * 2));
+    if (benchCount === 1) return index === 1 ? 1 : 0;
+    if (benchCount === 2) return index < 3 ? 2 : 0;
+    if (benchCount === 3) return style === "fair" ? (index < windowCount ? 3 : 0) : (index === 1 ? 2 : index === 2 ? 2 : 1);
+    var base = style === "fair" ? 3 : 2;
+    return Math.min(3, Math.max(1, base));
   }
+
   function addSubRow(matchId, windowId) {
     var match = data.matches.find(function (m) { return m.id === matchId; });
     if (!match) return;
@@ -1612,7 +1689,7 @@
     if (!validateSubChoice(match, sub, nextInId, nextOutId, nextPosition)) { render(); return; }
     sub[field] = value;
     if (field === "playerOutId") {
-      var before = lineupBeforeSub(match, subId);
+      var before = lineupBeforeWindow(match, sub.windowId);
       var pos = positionOfPlayer(before, value);
       if (pos) sub.position = pos;
       sub.manualPosition = false;
@@ -1650,11 +1727,14 @@
     addMinutes(current, full, cutoff - last);
     if (liveFinal && cutoff < 50) {
       var extra = 50 - cutoff;
+      var gkIds = goalkeeperIdsForPlan(match);
       players.forEach(function (p) {
-        if (p.id !== (lineupFor(match).GK || '')) full[p.id] = (full[p.id] || 0) + extra;
+        if (!gkIds[p.id]) full[p.id] = (full[p.id] || 0) + extra;
       });
-      var gkId = lineupFor(match).GK;
-      if (gkId && full[gkId] !== undefined) full[gkId] = 50;
+      if ((match.keeperPlan || 'fixed') === 'fixed') {
+        var gkId = lineupFor(match).GK;
+        if (gkId && full[gkId] !== undefined) full[gkId] = 50;
+      }
     } else {
       addMinutes(current, full, 50 - cutoff);
     }
@@ -2018,6 +2098,7 @@
       renderStepFormation(match) +
       renderStepLineup(match) +
       renderStepSubs(match) +
+      renderPlanHighlights(match) +
       renderStepShare(match) +
       '</div>';
   }
@@ -2034,14 +2115,12 @@
     var players = matchPlayers(match.id);
     var currentIds = players.map(function (p) { return p.tournamentPlayerId; }).filter(Boolean);
     var options = tournamentPlayers(match.tournamentId).filter(function (tp) { return currentIds.indexOf(tp.id) < 0; }).map(function (tp) { var gp = globalPlayer(tp.globalPlayerId); return '<option value="' + tp.id + '">' + escapeHtml(gp ? gp.name : 'Player') + ' · ' + escapeHtml(tp.membership) + '</option>'; }).join('');
-    var lineupReady = hasLineupData(match);
-    var minutesBundle = lineupReady ? estimateMinutesBundle(match) : null;
-    var minutesToggle = lineupReady ? '<label class="row minutes-toggle" style="margin:0;text-transform:none;letter-spacing:0"><input style="width:auto" type="checkbox" ' + (match.showMinutes ? 'checked' : '') + ' onchange="app.updateMatch(\'' + match.id + '\',\'showMinutes\',this.checked)"> Show estimated minutes</label>' : '<span class="subtext">Estimated minutes appear here after a lineup is generated.</span>';
-    return '<div class="card"><div class="step-header"><h2><span class="stepnum">2</span>Confirm players</h2><div class="row"><span class="badge">Team / Support / New</span>' + minutesToggle + '</div></div>' +
+    return '<div class="card"><div class="step-header"><h2><span class="stepnum">2</span>Confirm players</h2><div class="row"><span class="badge">Team / Support / New</span><span class="badge">Signed-up order</span></div></div>' +
       '<div class="manual-player-add"><label>Add roster player manually</label><div class="row"><select id="manualPlayer_' + match.id + '"><option value="">Search/select roster player</option>' + options + '</select><button class="btn small" onclick="app.addRosterPlayerToMatch(\'' + match.id + '\')">Add</button></div></div>' +
-      (players.length ? '<div class="list confirm-player-list">' + players.map(function (mp) { return renderMatchPlayerConfirm(mp, match, minutesBundle); }).join('') + '</div>' : '<div class="empty-state">Import a WhatsApp list first, or add a roster player manually.</div>') + '</div>';
+      (players.length ? '<div class="list confirm-player-list">' + players.map(function (mp) { return renderMatchPlayerConfirm(mp, match); }).join('') + '</div>' : '<div class="empty-state">Import a WhatsApp list first, or add a roster player manually.</div>') + '</div>';
   }
-  function renderMatchPlayerConfirm(mp, match, minutes) {
+
+  function renderMatchPlayerConfirm(mp, match) {
     var suggested = mp.suggestedTournamentPlayerId ? tournamentPlayer(mp.suggestedTournamentPlayerId) : null;
     var sGp = suggested ? globalPlayer(suggested.globalPlayerId) : null;
     if (mp.status === "new") {
@@ -2052,28 +2131,40 @@
       return '<div class="item"><div><div class="row"><div class="player-title">' + escapeHtml(mp.name) + '</div><span class="badge warn">Review</span></div><div class="subtext">Possible match: ' + escapeHtml(sGp ? sGp.name : '') + '</div></div><div class="row"><button class="btn small green" onclick="app.acceptFuzzy(\'' + mp.matchId + '\',\'' + mp.id + '\')">Use existing</button><button class="btn small amber" onclick="app.rejectFuzzy(\'' + mp.matchId + '\',\'' + mp.id + '\')">Create support</button></div></div>';
     }
     var ctx = playerContext(mp);
-    var minuteHtml = '';
-    if (match && match.showMinutes && minutes) {
-      var planned = minutes.planned ? Math.round(minutes.planned[mp.id] || 0) : 0;
-      var full = minutes.full ? Math.round(minutes.full[mp.id] || 0) : planned;
-      minuteHtml = minutes.liveFinal ? '<span class="minute-pill">' + planned + ' planned · ~' + full + ' all-in</span>' : '<span class="minute-pill">~' + full + ' min</span>';
-    }
-    return '<div class="item confirm-player-row"><div class="row"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><div class="player-title">' + escapeHtml(ctx.name) + '</div><div class="subtext">Signup #' + mp.signupOrder + ' · ' + escapeHtml(mp.availability) + ' · ' + mp.probability + '%</div></div></div><div class="row"><button class="btn tiny secondary" title="Move earlier in sign-up order" onclick="app.moveMatchPlayerOrder(\'' + mp.id + '\',-1)">↑</button><button class="btn tiny secondary" title="Move later in sign-up order" onclick="app.moveMatchPlayerOrder(\'' + mp.id + '\',1)">↓</button>' + minuteHtml + membershipBadge(ctx.membership) + '<label class="row" style="margin:0;text-transform:none;letter-spacing:0"><input style="width:auto" type="checkbox" ' + (mp.included ? 'checked' : '') + ' onchange="app.toggleMatchPlayer(\'' + mp.id + '\',this.checked)"> Include</label><button class="btn small secondary" onclick="app.removeMatchPlayer(\'' + mp.id + '\')">Remove</button></div></div>';
+    return '<div class="item confirm-player-row"><div class="row"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><div class="player-title">' + escapeHtml(ctx.name) + '</div><div class="subtext">Signup #' + mp.signupOrder + ' · ' + escapeHtml(mp.availability) + ' · ' + mp.probability + '%</div></div></div><div class="row"><button class="btn tiny secondary" title="Move earlier in sign-up order" onclick="app.moveMatchPlayerOrder(\'' + mp.id + '\',-1)">↑</button><button class="btn tiny secondary" title="Move later in sign-up order" onclick="app.moveMatchPlayerOrder(\'' + mp.id + '\',1)">↓</button>' + membershipBadge(ctx.membership) + '<label class="row" style="margin:0;text-transform:none;letter-spacing:0"><input style="width:auto" type="checkbox" ' + (mp.included ? 'checked' : '') + ' onchange="app.toggleMatchPlayer(\'' + mp.id + '\',this.checked)"> Include</label><button class="btn small secondary" onclick="app.removeMatchPlayer(\'' + mp.id + '\')">Remove</button></div></div>';
+  }
+
+  function gkCapableMatchPlayers(match) {
+    return activeMatchPlayers(match.id).filter(function (mp) { return matchPlayerGkCapable(mp.id); });
+  }
+  function renderKeeperPlanOptions(match) {
+    var keepers = gkCapableMatchPlayers(match);
+    if (keepers.length < 2) return '<div class="control-group keeper-compact"><label>Keeper plan</label><div class="keeper-plan-note">Fixed GK · 50 minutes</div></div>';
+    var plan = match.keeperPlan || 'fixed';
+    return '<div class="control-group"><label>Keeper plan</label><div class="tabs compact-control"><button class="' + (plan === 'fixed' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'keeperPlan\',\'fixed\')">Fixed GK · 50</button><button class="' + (plan === 'split' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'keeperPlan\',\'split\')">Split halves</button><button class="' + (plan === 'manual' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'keeperPlan\',\'manual\')">Manual</button></div><p class="subtext">Standard is fixed GK. Split halves creates a keeper change at half if a bench GK is available.</p></div>';
   }
   function renderStepFormation(match) {
     var mode = match.suggestMode || 'positional';
     var rotation = match.rotationStyle || 'balanced';
     var finalPhase = match.finalPhase || 'live';
     var timing = match.subTiming || inferSubTiming(match);
-    return '<div class="card plan-settings-card"><div class="step-header"><h2><span class="stepnum">3</span>Plan settings</h2><span class="badge">Auto-suggest is a first draft. You can still edit manually.</span></div>' +
-      '<div class="plan-settings-grid">' +
-        '<section><label>Formation</label><div class="formation-grid">' + Object.keys(FORMATIONS).map(function (key) { return renderFormationOption(match, key); }).join('') + '</div></section>' +
-        '<section><label>Starting lineup priority</label><div class="tabs"><button class="' + (mode === 'positional' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'suggestMode\',\'positional\')">Best positional fit</button><button class="' + (mode === 'signup' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'suggestMode\',\'signup\')">Sign-up order</button></div><p class="subtext">Sign-up order is a tie-breaker. It will not override major position gaps.</p></section>' +
-        '<section><label>Rotation style</label><div class="tabs"><button class="' + (rotation === 'competitive' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'rotationStyle\',\'competitive\')">Competitive</button><button class="' + (rotation === 'balanced' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'rotationStyle\',\'balanced\')">Balanced</button><button class="' + (rotation === 'fair' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'rotationStyle\',\'fair\')">Fair minutes</button></div><p class="subtext">Controls substitutions: strength vs equal time.</p></section>' +
-        '<section><label>Substitution timing</label><div class="tabs"><button class="' + (timing === 'standard' || timing === 'balanced' ? 'active' : '') + '" onclick="app.applySubTemplate(\'' + match.id + '\',\'balanced\')">Standard 12 / Half / Last 12</button><button class="' + (timing === 'heavy' ? 'active' : '') + '" onclick="app.applySubTemplate(\'' + match.id + '\',\'heavy\')">Heavy rotation</button><button class="' + (timing === 'custom' ? 'active' : '') + '" onclick="app.addWindow(\'' + match.id + '\')">Custom</button></div><p class="subtext">Changes per window stay Auto unless you enter a target in the window.</p></section>' +
-        '<section><label>Final phase</label><div class="tabs"><button class="' + (finalPhase === 'planned' ? 'active' : '') + '" onclick="app.setFinalPhase(\'' + match.id + '\',\'planned\')">Plan final 12</button><button class="' + (finalPhase === 'live' ? 'active' : '') + '" onclick="app.setFinalPhase(\'' + match.id + '\',\'live\')">Live final 12</button></div><p class="subtext">Live final 12 shows both planned minutes and all-in estimates in Confirm Players.</p></section>' +
-      '</div></div>';
+    var benchCount = benchPlayers(match).length;
+    var heavyRecommended = benchCount > 3;
+    var finalLabel = timing === 'heavy' ? 'final 8' : 'final 12';
+    var keeperOptions = renderKeeperPlanOptions(match);
+    var intentText = rotation === 'competitive' ? 'Prioritizes stronger positional fit. Minimum time is still protected.' : rotation === 'fair' ? 'Prioritizes playing-time balance while avoiding weak DEF / Center structure.' : 'Balances team strength and playing time. Roster players win close calls.';
+    return '<div class="card plan-settings-card"><div class="step-header"><h2><span class="stepnum">3</span>Plan settings</h2><div class="row"><button class="btn" onclick="app.autoPlanMatch(\'' + match.id + '\')">Auto plan match</button><span class="badge">First draft only · manual edits stay available</span></div></div>' +
+      '<div class="plan-command-layout">' +
+        '<section class="formation-command"><label>Formation</label><div class="formation-grid">' + Object.keys(FORMATIONS).map(function (key) { return renderFormationOption(match, key); }).join('') + '</div></section>' +
+        '<section class="plan-control-panel"><div class="control-group"><label>Starting lineup priority</label><div class="tabs compact-control"><button class="' + (mode === 'positional' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'suggestMode\',\'positional\')">Best positional fit</button><button class="' + (mode === 'signup' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'suggestMode\',\'signup\')">Sign-up order</button></div><p class="subtext">Signed-up players rank higher only when choices are close.</p></div>' +
+        '<div class="control-group"><label>Rotation intent</label><div class="intent-spectrum ' + escapeAttr(rotation) + '"><button class="' + (rotation === 'competitive' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'rotationStyle\',\'competitive\')"><strong>Competitive</strong><span>Stronger</span></button><button class="' + (rotation === 'balanced' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'rotationStyle\',\'balanced\')"><strong>Balanced</strong><span>Default</span></button><button class="' + (rotation === 'fair' ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'rotationStyle\',\'fair\')"><strong>Fair minutes</strong><span>Time</span></button></div><div class="intent-readout">' + escapeHtml(intentText) + '</div></div>' +
+        '<div class="control-grid"><div class="control-group"><label>Substitution timing</label><div class="tabs compact-control"><button class="' + (timing === 'standard' || timing === 'balanced' ? 'active' : '') + '" onclick="app.applySubTemplate(\'' + match.id + '\',\'balanced\')">Standard</button><button class="' + (timing === 'heavy' ? 'active' : '') + '" onclick="app.applySubTemplate(\'' + match.id + '\',\'heavy\')">Heavy</button><button class="' + (timing === 'custom' ? 'active' : '') + '" onclick="app.addWindow(\'' + match.id + '\')">Custom</button></div><p class="subtext">' + (heavyRecommended ? 'Bench has 4+ players: Auto plan will switch to heavy every 8 minutes.' : 'Auto timing uses max 3 changes per window.') + '</p></div>' +
+        '<div class="control-group"><label>Final phase</label><div class="tabs compact-control"><button class="' + (finalPhase === 'planned' ? 'active' : '') + '" onclick="app.setFinalPhase(\'' + match.id + '\',\'planned\')">Plan ' + escapeHtml(finalLabel) + '</button><button class="' + (finalPhase === 'live' ? 'active' : '') + '" onclick="app.setFinalPhase(\'' + match.id + '\',\'live\')">Live ' + escapeHtml(finalLabel) + '</button></div><p class="subtext">Live phase is shown as planned + all-in estimate in Highlights.</p></div></div>' +
+        keeperOptions +
+        '<div class="changes-auto-card"><strong>Changes per window</strong><span>Auto · max 3</span><em>Use target changes inside a custom window when you need manual control.</em></div>' +
+      '</section></div></div>';
   }
+
   function renderFormationOption(match, key) {
     return '<button class="formation-card ' + (match.formation === key ? 'active' : '') + '" onclick="app.updateMatch(\'' + match.id + '\',\'formation\',\'' + key + '\')"><div class="player-title">' + key + '</div><div class="subtext">' + (key === '2-3-1' ? '2 DEF / 3 MID / 1 FWD' : '3 DEF / 2 MID / 1 FWD') + '</div>' + renderMiniField(key) + '</button>';
   }
@@ -2109,11 +2200,13 @@
   function renderStepSubs(match) {
     var cfg = rotationConfig(match.rotationStyle || 'balanced');
     var timing = match.subTiming || inferSubTiming(match);
-    var finalText = (match.finalPhase || 'live') === 'live' ? 'Live final 12' : 'Plan final 12';
+    var cfgFinal = finalPhaseConfig(match);
+    var finalText = (match.finalPhase || 'live') === 'live' ? 'Live ' + cfgFinal.text : 'Plan ' + cfgFinal.text;
     return '<div class="card"><div class="step-header"><h2><span class="stepnum">5</span>Plan substitutions</h2><div class="row"><button class="btn" onclick="app.suggestSubs(\'' + match.id + '\')">Auto Suggest Subs</button><button class="btn secondary" onclick="app.clearSubs(\'' + match.id + '\')">Clear</button></div></div>' +
-      '<div class="plan-summary-row"><span class="badge">' + escapeHtml(cfg.label) + '</span><span class="badge">' + escapeHtml(timing === 'heavy' ? 'Heavy rotation' : timing === 'custom' ? 'Custom timing' : 'Standard timing') + '</span><span class="badge">' + escapeHtml(finalText) + '</span><span class="subtext">Targets are Auto unless customized inside a window.</span></div>' +
-      '<div class="sub-planner-grid"><div>' + renderMomentPreview(match) + '</div><div class="grid">' + (match.subWindows || []).sort(function(a,b){return a.minute-b.minute;}).map(function (w) { return renderWindow(match, w); }).join('') + '<button class="btn secondary" onclick="app.addWindow(\'' + match.id + '\')">Add custom window</button><div><label>Strategy note</label><textarea onchange="app.updateMatch(\'' + match.id + '\',\'strategyNote\',this.value)">' + escapeHtml(match.strategyNote || '') + '</textarea></div></div></div><div class="subtext">Estimated minutes are shown in Confirm Players after the lineup is generated.</div></div>';
+      '<div class="plan-summary-row"><span class="badge">' + escapeHtml(cfg.label) + '</span><span class="badge">' + escapeHtml(timing === 'heavy' ? 'Heavy rotation' : timing === 'custom' ? 'Custom timing' : 'Standard timing') + '</span><span class="badge">' + escapeHtml(finalText) + '</span><span class="subtext">Auto uses max 3 changes per window. Each window is treated as a simultaneous batch.</span></div>' +
+      '<div class="sub-planner-grid"><div>' + renderMomentPreview(match) + '</div><div class="grid">' + (match.subWindows || []).sort(function(a,b){return a.minute-b.minute;}).map(function (w) { return renderWindow(match, w); }).join('') + '<button class="btn secondary" onclick="app.addWindow(\'' + match.id + '\')">Add custom window</button><div><label>Strategy note</label><textarea onchange="app.updateMatch(\'' + match.id + '\',\'strategyNote\',this.value)">' + escapeHtml(match.strategyNote || '') + '</textarea></div></div></div></div>';
   }
+
   function renderMomentPreview(match) {
     var windows = orderedSubWindows(match).filter(function (w) { return !w.live; });
     var chosen = selectedMoment(match);
@@ -2143,7 +2236,7 @@
     }).join('');
   }
   function playerOutOptionsFrom(match, players, selected, sub) {
-    var before = lineupBeforeSub(match, sub.id);
+    var before = lineupBeforeWindow(match, sub.windowId);
     if (!players.length && selected) {
       var existing = data.matchPlayers.find(function (p) { return p.id === selected; });
       if (existing) players = [existing];
@@ -2170,9 +2263,219 @@
   function renderMinutes(players, minutes) {
     return '<div style="margin-top:12px"><h3>Estimated minutes</h3><div class="minutes-grid">' + players.map(function (mp) { var ctx = playerContext(mp); var min = Math.round(minutes[mp.id] || 0); return '<div class="minute-card"><div class="row"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><div class="player-title">' + escapeHtml(ctx.name) + '</div><div class="subtext">' + min + ' / 50 min</div></div></div><div class="minute-bar"><span style="width:' + Math.min(100, min * 2) + '%"></span></div></div>'; }).join('') + '</div></div>';
   }
+  function goalkeeperIdsForPlan(match) {
+    var ids = {};
+    var gk = lineupFor(match).GK;
+    if (gk) ids[gk] = true;
+    (match.subs || []).forEach(function (s) {
+      var before = lineupBeforeWindow(match, s.windowId);
+      var outPos = positionOfPlayer(before, s.playerOutId);
+      var targetPos = s.position || outPos;
+      if (outPos === 'GK') ids[s.playerOutId] = true;
+      if (targetPos === 'GK') ids[s.playerInId] = true;
+    });
+    return ids;
+  }
+  function goalkeeperTargetMinutes(match, playerId) {
+    if ((match.keeperPlan || 'fixed') === 'split') return 25;
+    return 50;
+  }
+  function segmentLineups(match) {
+    var segments = [];
+    var current = clone(lineupFor(match));
+    var last = 0;
+    orderedSubWindows(match).forEach(function (w) {
+      var minute = Math.max(0, Math.min(50, Number(w.minute || 0)));
+      if (minute > last) segments.push({ start: last, end: minute, lineup: clone(current), live: false });
+      if (!w.live) orderedSubsInWindow(match, w.id).forEach(function (s) { applySubToLineup(match, current, s); });
+      last = Math.max(last, minute);
+    });
+    if (last < 50) segments.push({ start: last, end: 50, lineup: clone(current), live: match.finalPhase === 'live' });
+    return segments.filter(function (seg) { return seg.end > seg.start; });
+  }
+  function slotScoreForPlayer(match, lineup, slot) {
+    var id = lineup[slot.position];
+    if (!id) return 0;
+    var mp = data.matchPlayers.find(function (p) { return p.id === id; });
+    return mp ? roleSkill(playerContext(mp), slot.role) : 0;
+  }
+  function computePlanScores(match) {
+    if (!match || !hasLineupData(match)) return { team: 0, defense: 0, center: 0, forward: 0 };
+    var formation = FORMATIONS[match.formation] || FORMATIONS['2-3-1'];
+    var segments = segmentLineups(match);
+    var teamSum = 0, teamDen = 0, defSum = 0, defDen = 0, fwdSum = 0, fwdDen = 0, ctrSum = 0, ctrDen = 0;
+    segments.forEach(function (seg) {
+      var dur = seg.end - seg.start;
+      formation.forEach(function (slot) {
+        var value = slotScoreForPlayer(match, seg.lineup, slot);
+        teamSum += value * dur;
+        teamDen += dur;
+        if (slot.role === 'defense') { defSum += value * dur; defDen += dur; }
+        if (slot.role === 'forward') { fwdSum += value * dur; fwdDen += dur; }
+      });
+      if (match.formation === '3-2-1') {
+        var cb = formation.find(function (s) { return s.position === 'CB'; });
+        var cbScore = cb ? slotScoreForPlayer(match, seg.lineup, cb) : 0;
+        var support = 0;
+        ['LM','RM','FWD'].forEach(function (pos) {
+          var id = seg.lineup[pos];
+          var mp = id ? data.matchPlayers.find(function (p) { return p.id === id; }) : null;
+          if (mp) support = Math.max(support, roleSkill(playerContext(mp), 'center'));
+        });
+        ctrSum += ((cbScore * 0.30) + (support * 0.70)) * dur;
+        ctrDen += dur;
+      } else {
+        var cm = formation.find(function (s) { return s.position === 'CM'; });
+        ctrSum += (cm ? slotScoreForPlayer(match, seg.lineup, cm) : 0) * dur;
+        ctrDen += dur;
+      }
+    });
+    function avg(sum, den) { return den ? Math.round((sum / den) * 10) / 10 : 0; }
+    return { team: avg(teamSum, teamDen), defense: avg(defSum, defDen), center: avg(ctrSum, ctrDen), forward: avg(fwdSum, fwdDen) };
+  }
+  function scoreLabel(value) {
+    value = Number(value || 0);
+    if (value >= 4.6) return 'Elite';
+    if (value >= 4.1) return 'Strong';
+    if (value >= 3.5) return 'Stable';
+    if (value >= 3.0) return 'Needs support';
+    return 'Risk';
+  }
+  function planWarnings(match, bundle) {
+    var warnings = [];
+    if (!match || !hasLineupData(match)) return warnings;
+    var active = activeMatchPlayers(match.id);
+    var gkIds = goalkeeperIdsForPlan(match);
+    var outfield = active.filter(function (mp) { return !gkIds[mp.id]; });
+    var target = outfield.length ? 300 / outfield.length : 0;
+    outfield.forEach(function (mp) {
+      var full = Math.round((bundle.full && bundle.full[mp.id]) || 0);
+      if (target && full <= target - 10) warnings.push({ level: 'warn', title: playerContext(mp).name + ' is below target minutes', detail: full + ' min vs ' + Math.round(target) + ' min outfield average.' });
+    });
+    Object.keys(gkIds).forEach(function (id) {
+      var mp = data.matchPlayers.find(function (p) { return p.id === id; });
+      if (!mp) return;
+      var targetGk = goalkeeperTargetMinutes(match, id);
+      var full = Math.round((bundle.full && bundle.full[id]) || 0);
+      if (full < targetGk - 5) warnings.push({ level: 'warn', title: playerContext(mp).name + ' is below GK target', detail: full + ' min vs ' + targetGk + ' min keeper target.' });
+    });
+    var initialBench = benchPlayersForLineup(match, lineupFor(match)).map(function (p) { return p.id; });
+    var firstWindow = orderedSubWindows(match).filter(function (w) { return !w.live; })[0];
+    if (firstWindow && initialBench.length) {
+      var rowsFirst = orderedSubsInWindow(match, firstWindow.id);
+      var firstIn = rowsFirst.map(function (s) { return s.playerInId; }).filter(Boolean);
+      var expected = Math.min(3, initialBench.length);
+      var usedInitial = initialBench.filter(function (id) { return firstIn.indexOf(id) >= 0; }).length;
+      if (usedInitial < expected) warnings.push({ level: 'warn', title: 'First window does not bring in all bench players', detail: 'Expected ' + expected + ', found ' + usedInitial + '.' });
+    }
+    orderedSubWindows(match).forEach(function (w) {
+      if (w.live) return;
+      var before = lineupBeforeWindow(match, w.id);
+      var benchIds = benchPlayersForLineup(match, before).map(function (p) { return p.id; });
+      var fieldIds = idsOnField(before);
+      var rows = orderedSubsInWindow(match, w.id);
+      var inIds = {}, outIds = {}, defChanges = 0;
+      rows.forEach(function (s) {
+        if (!s.playerInId || !s.playerOutId) warnings.push({ level: 'fix', title: w.label + ' has an incomplete change', detail: 'Choose both IN and OUT players.' });
+        if (s.playerInId && benchIds.indexOf(s.playerInId) < 0) warnings.push({ level: 'fix', title: playerNameById(s.playerInId) + ' is not on the bench at ' + w.label, detail: 'Incoming players must come from the pre-window bench.' });
+        if (s.playerOutId && fieldIds.indexOf(s.playerOutId) < 0) warnings.push({ level: 'fix', title: playerNameById(s.playerOutId) + ' is not on the field at ' + w.label, detail: 'Outgoing players must come from the pre-window field.' });
+        if (s.playerInId && outIds[s.playerInId]) warnings.push({ level: 'fix', title: playerNameById(s.playerInId) + ' is both OUT and IN at ' + w.label, detail: 'Same-window re-entry is not allowed.' });
+        if (s.playerOutId && inIds[s.playerOutId]) warnings.push({ level: 'fix', title: playerNameById(s.playerOutId) + ' is both IN and OUT at ' + w.label, detail: 'Same-window re-entry is not allowed.' });
+        if (s.playerInId && inIds[s.playerInId]) warnings.push({ level: 'fix', title: playerNameById(s.playerInId) + ' is used twice as IN at ' + w.label, detail: 'Each player can enter once per window.' });
+        if (s.playerOutId && outIds[s.playerOutId]) warnings.push({ level: 'fix', title: playerNameById(s.playerOutId) + ' is used twice as OUT at ' + w.label, detail: 'Each player can leave once per window.' });
+        inIds[s.playerInId] = true; outIds[s.playerOutId] = true;
+        var pos = positionOfPlayer(before, s.playerOutId);
+        var role = roleForPosition(pos, match.formation);
+        if (role === 'defense') defChanges++;
+        if ((pos === 'GK' || (s.position || pos) === 'GK') && (match.keeperPlan || 'fixed') === 'fixed') warnings.push({ level: 'warn', title: 'GK change found while keeper plan is fixed', detail: 'Use Split halves or Manual if this is intentional.' });
+      });
+      if (defChanges > 1) warnings.push({ level: 'warn', title: 'Multiple defenders changed at ' + w.label, detail: 'Avoid changing both defenders in the same window when possible.' });
+    });
+    var lineup = lineupFor(match);
+    (FORMATIONS[match.formation] || FORMATIONS['2-3-1']).forEach(function (slot) {
+      if (slot.position === 'GK') return;
+      var id = lineup[slot.position];
+      var mp = id ? data.matchPlayers.find(function (p) { return p.id === id; }) : null;
+      if (!mp) return;
+      var ctx = playerContext(mp);
+      if (ctx.membership !== 'support') return;
+      var main = roleSkill(ctx, slot.role);
+      var bestRoster = bestRosterSkillForSlot(activeMatchPlayers(match.id).map(playerContext), slot);
+      var critical = slot.role === 'defense' || slot.role === 'center' || slot.role === 'forward';
+      if (critical && !(main >= 5 && (main - bestRoster) >= 2)) warnings.push({ level: 'warn', title: 'Support player starts in a critical role', detail: ctx.name + ' starts at ' + slot.position + '. Roster players should win close calls.' });
+    });
+    return warnings;
+  }
+  function playerNameById(id) {
+    var mp = data.matchPlayers.find(function (p) { return p.id === id; });
+    return mp ? playerContext(mp).name : 'Player';
+  }
+  function computePlanHighlights(match) {
+    var bundle = hasLineupData(match) ? estimateMinutesBundle(match) : { planned: {}, full: {}, liveFinal: false, cutoff: 50 };
+    var scores = computePlanScores(match);
+    var warnings = planWarnings(match, bundle);
+    var fixCount = warnings.filter(function (w) { return w.level === 'fix'; }).length;
+    var status = !hasLineupData(match) ? { cls: 'empty', label: 'Generate plan', detail: 'Build a lineup and substitutions to see highlights.' } : fixCount ? { cls: 'fix', label: 'Fix required', detail: fixCount + ' critical issue' + (fixCount === 1 ? '' : 's') } : warnings.length ? { cls: 'warn', label: 'Needs review', detail: warnings.length + ' coaching note' + (warnings.length === 1 ? '' : 's') } : { cls: 'good', label: 'Strong plan', detail: 'No critical warnings' };
+    return { bundle: bundle, scores: scores, warnings: warnings, status: status };
+  }
+  function renderScoreCard(label, value, icon) {
+    var pct = Math.max(0, Math.min(100, Number(value || 0) / 5 * 100));
+    return '<div class="score-card"><div class="score-icon">' + icon + '</div><div><span>' + escapeHtml(label) + '</span><strong>' + Number(value || 0).toFixed(1) + '</strong><em>' + escapeHtml(scoreLabel(value)) + '</em></div><div class="score-meter"><i style="width:' + pct + '%"></i></div></div>';
+  }
+  function renderPlanWarnings(warnings) {
+    if (!warnings.length) return '<div class="coaching-card good-note"><strong>Good plan</strong><span>No invalid substitutions or major time-balance risks detected.</span></div>';
+    return '<div class="warning-stack">' + warnings.slice(0, 6).map(function (w) { return '<div class="coaching-card ' + (w.level === 'fix' ? 'fix-note' : 'warn-note') + '"><strong>' + escapeHtml(w.title) + '</strong><span>' + escapeHtml(w.detail || '') + '</span></div>'; }).join('') + (warnings.length > 6 ? '<div class="subtext">+' + (warnings.length - 6) + ' more notes.</div>' : '') + '</div>';
+  }
+  function renderPlayingTimeChart(match, highlights) {
+    var active = activeMatchPlayers(match.id);
+    if (!active.length || !hasLineupData(match)) return '<div class="empty-state">Build a lineup to see playing-time balance.</div>';
+    var bundle = highlights.bundle;
+    var gkIds = goalkeeperIdsForPlan(match);
+    var outfield = active.filter(function (mp) { return !gkIds[mp.id]; });
+    var avg = outfield.length ? 300 / outfield.length : 0;
+    var live = bundle.liveFinal;
+    var rows = active.slice().sort(function (a, b) { return (a.signupOrder || 99) - (b.signupOrder || 99); }).map(function (mp) {
+      var ctx = playerContext(mp);
+      var planned = Math.round((bundle.planned && bundle.planned[mp.id]) || 0);
+      var full = Math.round((bundle.full && bundle.full[mp.id]) || planned);
+      var isGk = !!gkIds[mp.id];
+      var target = isGk ? goalkeeperTargetMinutes(match, mp.id) : avg;
+      var status = full <= target - 10 ? 'low' : full >= target + 10 && !isGk ? 'high' : 'ok';
+      var plannedPct = Math.max(0, Math.min(100, planned / 50 * 100));
+      var fullPct = Math.max(plannedPct, Math.min(100, full / 50 * 100));
+      var targetPct = Math.max(0, Math.min(100, target / 50 * 100));
+      var minuteText = live ? planned + ' planned · ~' + full + ' all-in' : full + ' min';
+      return '<div class="time-row ' + status + (isGk ? ' gk-row' : '') + '" style="--planned:' + plannedPct + '%;--full:' + fullPct + '%;--target:' + targetPct + '%"><div class="time-player"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><strong>' + escapeHtml(ctx.name) + '</strong><span>' + (isGk ? 'GK target ' + Math.round(target) : 'Target ' + Math.round(avg)) + ' min</span></div></div><div class="time-track"><i class="allin"></i><i class="planned"></i><b></b></div><div class="time-value">' + escapeHtml(minuteText) + (status === 'low' ? '<em>Below target</em>' : '') + '</div></div>';
+    }).join('');
+    var gkLabel = (match.keeperPlan || 'fixed') === 'split' ? 'GK half target: 25 min' : 'GK target: 50 min';
+    return '<div class="time-chart"><div class="time-chart-head"><strong>Playing time balance</strong><span>Outfield average target: ' + Math.round(avg) + ' min · ' + gkLabel + '</span></div>' + rows + '</div>';
+  }
+  function renderCoachReadout(match, highlights) {
+    if (!hasLineupData(match)) return 'Generate the plan to see the coach readout.';
+    var scores = highlights.scores;
+    if (highlights.status.cls === 'fix') return 'Fix the substitution issue before sharing the plan.';
+    var lead = (match.rotationStyle || 'balanced') === 'fair' ? 'Fair-minutes plan' : (match.rotationStyle || 'balanced') === 'competitive' ? 'Competitive plan' : 'Balanced plan';
+    var strength = scores.forward >= 4.3 ? 'strong forward threat' : scores.defense >= 4 ? 'stable defensive base' : 'balanced structure';
+    var risk = highlights.warnings.length ? ' Review the coaching notes before kickoff.' : ' No major risks detected.';
+    return lead + ' with ' + strength + '. ' + risk;
+  }
+  function renderPlanHighlights(match) {
+    var h = computePlanHighlights(match);
+    var s = h.scores;
+    return '<div class="card plan-highlights-card"><div class="step-header"><h2><span class="stepnum">6</span>Plan highlights</h2><span class="badge">Recalculates after manual edits</span></div>' +
+      '<div class="plan-health ' + h.status.cls + '"><div><span>' + escapeHtml(h.status.label) + '</span><strong>' + escapeHtml(h.status.detail) + '</strong></div><p>' + escapeHtml(renderCoachReadout(match, h)) + '</p></div>' +
+      '<div class="score-grid">' + renderScoreCard('Team Score', s.team, '★') + renderScoreCard('Defense', s.defense, '🛡') + renderScoreCard('Center', s.center, '◈') + renderScoreCard('Forward', s.forward, '⚡') + '</div>' +
+      '<div class="highlights-grid"><div><h3>Warnings / coaching notes</h3>' + renderPlanWarnings(h.warnings) + '</div><div>' + renderPlayingTimeChart(match, h) + '</div></div></div>';
+  }
+  function renderShareHighlightsCompact(match) {
+    var h = computePlanHighlights(match);
+    if (!hasLineupData(match)) return '';
+    var s = h.scores;
+    return '<div class="poster-highlights"><div><strong>' + escapeHtml(h.status.label) + '</strong><span>' + escapeHtml(h.status.detail) + '</span></div><div class="poster-score-row"><span>Team ' + s.team.toFixed(1) + '</span><span>DEF ' + s.defense.toFixed(1) + '</span><span>CTR ' + s.center.toFixed(1) + '</span><span>FWD ' + s.forward.toFixed(1) + '</span></div></div>';
+  }
   function renderStepShare(match) {
     var text = buildShareText(match);
-    return '<div class="card share-step"><div class="step-header"><h2><span class="stepnum">6</span>Share match plan</h2><div class="row"><button class="btn" onclick="app.downloadShareImage(\'' + match.id + '\')">Download image</button><button class="btn secondary" onclick="app.openShareImage(\'' + match.id + '\')">Open image</button><button class="btn secondary" onclick="app.copyShareImage(\'' + match.id + '\')">Copy image to clipboard</button><button class="btn ghost" onclick="app.copyShareText(\'' + match.id + '\')">Copy WhatsApp text</button></div></div><div class="share-stack"><div class="share-main">' + renderShareCard(match) + '</div><div class="share-message"><label>WhatsApp message</label><textarea class="share-text" id="shareText">' + escapeHtml(text) + '</textarea></div></div></div>';
+    return '<div class="card share-step"><div class="step-header"><h2><span class="stepnum">7</span>Share match plan</h2><div class="row"><button class="btn" onclick="app.downloadShareImage(\'' + match.id + '\')">Download image</button><button class="btn secondary" onclick="app.openShareImage(\'' + match.id + '\')">Open image</button><button class="btn secondary" onclick="app.copyShareImage(\'' + match.id + '\')">Copy image to clipboard</button><button class="btn ghost" onclick="app.copyShareText(\'' + match.id + '\')">Copy WhatsApp text</button></div></div><div class="share-stack"><div class="share-main">' + renderShareCard(match) + '</div><div class="share-message"><label>WhatsApp message</label><textarea class="share-text" id="shareText">' + escapeHtml(text) + '</textarea></div></div></div>';
   }
   function renderShareCard(match) {
     var t = activeTournament();
@@ -2184,6 +2487,7 @@
     var meta = metaParts(match);
     return '<div class="share-poster" id="shareCard"><div class="poster-sun">7v7</div><div class="poster-header"><div><div class="eyebrow light">Match plan</div><h2>' + escapeHtml(t.teamName) + '</h2>' + (meta.length ? '<p>' + escapeHtml(meta.join(' · ')) + '</p>' : '') + '</div><div class="poster-badge"><strong>' + escapeHtml(match.formation) + '</strong><span>formation</span></div></div>' +
       '<div class="poster-body"><div class="poster-field-card"><div class="poster-label">Starting 7</div>' + renderLineupField(match, true) + '</div><div class="poster-plan-card"><div class="poster-label">Bench</div><div class="bench poster-bench-list">' + benchHtml + '</div>' + renderShareSubTimeline(match) + '</div></div>' +
+      renderShareHighlightsCompact(match) +
       '<div class="poster-footer"><div><strong>Last phase</strong><span>' + escapeHtml(match.strategyNote || defaultStrategyNote()) + '</span></div></div></div>';
   }
   function renderShareSubTimeline(match) {
@@ -2381,7 +2685,14 @@
       try {
         var imageMap = {};
         sources.forEach(function (src, i) { imageMap[src] = images[i]; });
-        var W = 1200, H = 1600;
+        var windows = orderedSubWindows(match);
+        var bench = benchPlayers(match);
+        var rotationHeight = 0;
+        windows.forEach(function (w) {
+          var rows = (match.subs || []).filter(function (s) { return s.windowId === w.id; });
+          rotationHeight += w.live ? 92 : Math.max(92, 48 + Math.max(1, rows.length) * 38);
+        });
+        var W = 1200, H = Math.max(1760, 1260 + Math.ceil(bench.length / 4) * 86 + rotationHeight + 210);
         var canvas = document.createElement('canvas');
         canvas.width = W;
         canvas.height = H;
@@ -2401,7 +2712,7 @@
         ctx.arc(1040, 80, 250, 0, Math.PI * 2);
         ctx.fill();
         ctx.globalAlpha = 1;
-        fillRoundRect(ctx, 50, 50, 1100, 1500, 48, 'rgba(255,255,255,0.92)', '#cfe0f5', 4);
+        fillRoundRect(ctx, 50, 50, 1100, H - 100, 48, 'rgba(255,255,255,0.92)', '#cfe0f5', 4);
         drawFitText(ctx, 'MATCH PLAN', 95, 115, 500, '900 28px Arial, sans-serif', '#1d63e8');
         drawFitText(ctx, t.teamName || 'Team', 95, 175, 640, '900 58px Arial, sans-serif', '#102344');
         var title = matchDisplayTitle(match);
@@ -2412,7 +2723,19 @@
         drawFitText(ctx, match.formation || '', 985, 158, 150, '900 34px Arial, sans-serif', '#ffffff', 'center');
         drawFitText(ctx, 'formation', 985, 192, 150, '700 20px Arial, sans-serif', '#bcd3ff', 'center');
 
-        var fieldX = 120, fieldY = 330, fieldW = 960, fieldH = 690;
+        var hi = computePlanHighlights(match);
+        var scoreY = 305;
+        fillRoundRect(ctx, 95, scoreY, 1010, 104, 28, '#f7fbff', '#d6e4f5', 3);
+        drawFitText(ctx, hi.status.label, 122, scoreY + 42, 260, '900 28px Arial, sans-serif', hi.status.cls === 'fix' ? '#b91c1c' : hi.status.cls === 'warn' ? '#b45309' : '#106b36');
+        drawFitText(ctx, hi.status.detail, 122, scoreY + 76, 310, '800 22px Arial, sans-serif', '#52637c');
+        var scoreItems = [['Team', hi.scores.team], ['DEF', hi.scores.defense], ['CTR', hi.scores.center], ['FWD', hi.scores.forward]];
+        scoreItems.forEach(function (item, i) {
+          var x = 455 + i * 155;
+          drawFitText(ctx, item[0], x, scoreY + 34, 120, '800 18px Arial, sans-serif', '#52637c', 'center');
+          drawFitText(ctx, Number(item[1] || 0).toFixed(1), x, scoreY + 76, 120, '900 34px Arial, sans-serif', '#102344', 'center');
+        });
+
+        var fieldX = 120, fieldY = 455, fieldW = 960, fieldH = 610;
         fillRoundRect(ctx, fieldX - 18, fieldY - 18, fieldW + 36, fieldH + 36, 34, '#dff2d4', '#ffffff', 6);
         var fieldImg = imageMap['assets/field-background.png'];
         if (fieldImg) ctx.drawImage(fieldImg, fieldX, fieldY, fieldW, fieldH);
@@ -2424,18 +2747,17 @@
           if (slot.position === 'GK') y = Math.min(fieldY + fieldH - 72, y);
           if (mp) {
             var ctxp = playerContext(mp);
-            drawMarker(ctx, imageMap[ctxp.avatar.src], slot.position + ' ' + ctxp.name.split(' ')[0], x, y, 96, 240);
+            drawMarker(ctx, imageMap[ctxp.avatar.src], slot.position + ' ' + ctxp.name.split(' ')[0], x, y, 88, 230);
           } else {
             fillRoundRect(ctx, x - 60, y - 25, 120, 50, 25, 'rgba(16,45,89,0.9)', null, 0);
             drawFitText(ctx, slot.position, x, y + 10, 100, '900 26px Arial, sans-serif', '#ffffff', 'center');
           }
         });
 
-        var bench = benchPlayers(match);
-        var benchY = 1080;
+        var benchY = 1115;
         drawFitText(ctx, 'Bench', 95, benchY, 500, '900 34px Arial, sans-serif', '#102344');
         if (!bench.length) drawFitText(ctx, 'No bench players', 95, benchY + 45, 700, '700 24px Arial, sans-serif', '#52637c');
-        bench.slice(0, 8).forEach(function (mp, i) {
+        bench.slice(0, 12).forEach(function (mp, i) {
           var ctxp = playerContext(mp);
           var x = 95 + (i % 4) * 265;
           var y = benchY + 45 + Math.floor(i / 4) * 85;
@@ -2445,28 +2767,32 @@
           drawFitText(ctx, ctxp.primaryPosition || '', x + 72, y + 54, 100, '800 17px Arial, sans-serif', '#52637c');
         });
 
-        var rotY = benchY + (bench.length > 4 ? 225 : 140);
+        var rotY = benchY + 55 + Math.ceil(Math.min(bench.length, 12) / 4) * 85;
         drawFitText(ctx, 'Rotations', 95, rotY, 500, '900 34px Arial, sans-serif', '#102344');
-        var cursorY = rotY + 44;
-        orderedSubWindows(match).forEach(function (w) {
-          if (cursorY > H - 140) return;
-          fillRoundRect(ctx, 95, cursorY, 1010, 72, 24, '#f7fbff', '#d6e4f5', 3);
-          drawFitText(ctx, w.label, 122, cursorY + 43, 210, '900 23px Arial, sans-serif', '#1d63e8');
+        var cursorY = rotY + 30;
+        windows.forEach(function (w) {
+          var rows = (match.subs || []).filter(function (s) { return s.windowId === w.id; });
+          var cardH = w.live ? 92 : Math.max(92, 48 + Math.max(1, rows.length) * 38);
+          fillRoundRect(ctx, 95, cursorY, 1010, cardH, 24, '#f7fbff', '#d6e4f5', 3);
+          drawFitText(ctx, w.label, 122, cursorY + 42, 220, '900 23px Arial, sans-serif', '#1d63e8');
           if (w.live) {
-            drawFitText(ctx, 'Live rotation', 350, cursorY + 43, 650, '800 23px Arial, sans-serif', '#52637c');
-          } else {
-            var rows = (match.subs || []).filter(function (s) { return s.windowId === w.id; });
-            var text = rows.length ? rows.map(function (s) {
+            drawWrappedText(ctx, 'Live rotation · tired player asks out, ready player jumps in', 350, cursorY + 38, 690, 28, 2, '800 23px Arial, sans-serif', '#52637c');
+          } else if (rows.length) {
+            rows.forEach(function (s, i) {
               var inp = data.matchPlayers.find(function (p) { return p.id === s.playerInId; });
               var outp = data.matchPlayers.find(function (p) { return p.id === s.playerOutId; });
-              return (inp ? playerContext(inp).name.split(' ')[0] : 'TBD') + ' in → ' + (outp ? playerContext(outp).name.split(' ')[0] : 'TBD') + ' out';
-            }).join('  |  ') : 'No fixed changes';
-            drawFitText(ctx, text, 350, cursorY + 43, 720, '800 23px Arial, sans-serif', '#52637c');
+              var text = (inp ? playerContext(inp).name.split(' ')[0] : 'TBD') + ' in → ' + (outp ? playerContext(outp).name.split(' ')[0] : 'TBD') + ' out';
+              drawFitText(ctx, text, 350, cursorY + 40 + i * 36, 720, '800 23px Arial, sans-serif', '#52637c');
+            });
+          } else {
+            drawFitText(ctx, 'No fixed changes', 350, cursorY + 42, 720, '800 23px Arial, sans-serif', '#52637c');
           }
-          cursorY += 86;
+          cursorY += cardH + 14;
         });
         if (match.strategyNote) {
-          drawWrappedText(ctx, match.strategyNote, 95, H - 90, 1000, 28, 2, '700 22px Arial, sans-serif', '#52637c');
+          fillRoundRect(ctx, 95, cursorY + 10, 1010, 110, 24, '#eef6ff', '#d6e4f5', 3);
+          drawFitText(ctx, 'Last phase / coaching note', 122, cursorY + 48, 420, '900 24px Arial, sans-serif', '#102344');
+          drawWrappedText(ctx, match.strategyNote, 122, cursorY + 82, 940, 27, 3, '700 22px Arial, sans-serif', '#52637c');
         }
         canvasToBlob(canvas, callback);
       } catch (e) {
@@ -2476,6 +2802,7 @@
       }
     });
   }
+
   function membershipBadge(m) { return '<span class="badge ' + (m === 'team' ? 'team' : 'support') + '">' + (m === 'team' ? 'Team' : 'Support') + '</span>'; }
   function weekdayOptions(selected) {
     return ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map(function (d) { return '<option value="' + d + '" ' + (d === selected ? 'selected' : '') + '>' + d + '</option>'; }).join('');
@@ -2605,13 +2932,14 @@
     toggleMatchPlayer: function (mpId, checked) { var mp = data.matchPlayers.find(function (p) { return p.id === mpId; }); if (!mp) return; mp.included = checked; save(); render(); },
     removeMatchPlayer: function (mpId) { data.matchPlayers = data.matchPlayers.filter(function (p) { return p.id !== mpId; }); save(); render(); },
     suggestLineup: suggestLineup,
+    autoPlanMatch: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; suggestLineup(matchId, m.suggestMode || 'positional'); suggestSubs(matchId); toast('Auto match plan generated.'); },
     selectSlot: function (position) { state.activeSlot = state.activeSlot === position ? null : position; render(); },
     assignSelected: function (mpId) { var match = activeMatch(); if (!match || !state.activeSlot) return toast('Select a field slot first.'); Object.keys(lineupFor(match)).forEach(function (pos) { if (match.lineup[pos] === mpId) delete match.lineup[pos]; }); match.lineup[state.activeSlot] = mpId; match.status = 'planned'; match.showMinutes = true; state.activeSlot = null; save(); render(); },
     clearSlot: function (matchId, position) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; delete lineupFor(m)[position]; save(); render(); },
     clearLineup: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; m.lineup = {}; m.subs = []; m.showMinutes = false; state.momentByMatch[matchId] = 'initial'; save(); render(); },
     setMoment: function (matchId, momentId) { state.momentByMatch[matchId] = momentId; render(); },
     applySubTemplate: applySubTemplate,
-    setFinalPhase: function (matchId, mode) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; applyFinalPhaseMode(m, mode, false); save(); render(); toast((m.finalPhase === 'planned' ? 'Final 12 will be planned.' : 'Final 12 set as live coaching.')); },
+    setFinalPhase: function (matchId, mode) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; applyFinalPhaseMode(m, mode, false); var cfg = finalPhaseConfig(m); save(); render(); toast((m.finalPhase === 'planned' ? cfg.text + ' will be planned.' : cfg.text + ' set as live coaching.')); },
     addWindow: addWindow,
     updateWindow: updateWindow,
     deleteWindow: deleteWindow,
@@ -2620,7 +2948,7 @@
     updateSub: updateSub,
     startSubPositionOverride: function (matchId, subId) { state.editingSubPositionId = subId; render(); },
     stopSubPositionOverride: function () { state.editingSubPositionId = null; render(); },
-    setSubTargetPosition: function (matchId, subId, position) { var match = data.matches.find(function (m) { return m.id === matchId; }); var sub = match && match.subs.find(function (s) { return s.id === subId; }); if (!sub) return; var before = lineupBeforeSub(match, subId); var outPos = positionOfPlayer(before, sub.playerOutId); if (!validateSubChoice(match, sub, sub.playerInId, sub.playerOutId, position)) { state.editingSubPositionId = null; render(); return; } sub.position = position; sub.manualPosition = !!(outPos && position !== outPos); state.editingSubPositionId = null; save(); render(); },
+    setSubTargetPosition: function (matchId, subId, position) { var match = data.matches.find(function (m) { return m.id === matchId; }); var sub = match && match.subs.find(function (s) { return s.id === subId; }); if (!sub) return; var before = lineupBeforeWindow(match, sub.windowId); var outPos = positionOfPlayer(before, sub.playerOutId); if (!validateSubChoice(match, sub, sub.playerInId, sub.playerOutId, position)) { state.editingSubPositionId = null; render(); return; } sub.position = position; sub.manualPosition = !!(outPos && position !== outPos); state.editingSubPositionId = null; save(); render(); },
     deleteSub: deleteSub,
     clearSubs: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; m.subs = []; save(); render(); },
     copyShareText: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); var box = document.getElementById('shareText'); var text = box ? box.value : buildShareText(m); if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(function () { toast('WhatsApp text copied.'); }).catch(function () { fallbackCopy(text, 'WhatsApp text copied.'); }); } else fallbackCopy(text, 'WhatsApp text copied.'); },
