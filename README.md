@@ -1,35 +1,33 @@
-# Captain Match Planner v4.01
+# Captain Match Planner v4.03
 
-Installable local-first PWA for planning 7v7 soccer matches.
+Installable local-first PWA for 7v7 soccer match planning.
 
-## What changed in v4.01
+## What changed in v4.03
 
-- Redesigned the Tournament section for better usability and smaller screens.
-- Added a compact tournament selector with Current / Coming up / Past / Archived labels.
-- Added Summary / Full schedule toggle.
-  - Summary focuses on Week, Match, Date, and Time.
-  - Full adds Opponent, Field, Status, and schedule actions.
-- Consolidated tournament setup into a compact setup card with an edit pencil flow.
-- Structural tournament changes rebuild empty generated schedule rows while preserving planned/rescheduled matches.
-- Added protected Archive / Delete tournament flow.
-- Added one-click schedule exception actions: Skip week, Add double-header, Push future matches +1 week.
-- Double-header creation sets matches one hour apart by default.
-- Made Team roster much more compact with a matrix-style player row.
-- Moved estimated minutes into Confirm Players after a lineup exists, with a show/hide toggle.
-- Added a read-only Data tab inside the core app.
-- Improved share-card image export and added an Open image fallback.
-- Updated app version to v4.01 and service-worker cache to `captain-match-planner-v4-01-cache`.
+v4.03 starts from the v4.02 baseline and focuses on match planning logic and layout:
 
-## Data behavior
+- Consolidated formation, lineup priority, rotation style, timing, and final-phase behavior into a single **Plan settings** section.
+- Kept existing player attributes unchanged: FWD, WNG, CTR/Center, DEF, GK.
+- Updated lineup priority language to **Best positional fit** and **Sign-up order**.
+- Made sign-up order a tie-breaker instead of overriding major positional quality gaps.
+- Added **Rotation style**: Competitive, Balanced, Fair minutes.
+- Added explicit **Final phase** options: Plan final 12 or Live final 12.
+- Live final 12 now shows both **planned minutes** and **all-in estimated minutes** in Confirm Players.
+- Improved substitution suggestions to protect GK, DEF, and center structure while balancing playing time.
+- Support players start only when they create a meaningful quality upside, especially in DEF/CTR/FWD.
+- Added sign-up order move controls in Confirm Players.
+- Bumped service-worker cache to `captain-match-planner-v4-03-cache`.
 
-v4.01 is intended as an update over v4.0 using the same GitHub Pages URL and the same IndexedDB database name. Existing local data should remain available after deployment.
+## Deployment strategy
 
-Before deploying, export a backup from the current app.
+v4.03 is intended as an update over v4.02 using the same GitHub Pages URL and the same IndexedDB database name. Existing local data should remain available after deployment.
 
-## Local run
+Before deploying, export a backup from the live app.
+
+## Local test
 
 ```bash
-cd captain-match-planner-v4_01-local
+cd captain-match-planner-v4_03-local
 python3 -m http.server 5174
 ```
 
@@ -39,72 +37,40 @@ Open:
 http://localhost:5174
 ```
 
-## Deploy over the existing GitHub Pages repo
+## GitHub Pages deployment
 
-Use the existing repo and URL so the installed PWA and IndexedDB data continue to point to the same app scope.
-
-Recommended repo:
-
-```text
-github.com/jmhm-intuit/captain-match-repo-v4
-```
-
-Recommended live URL:
-
-```text
-https://jmhm-intuit.github.io/captain-match-repo-v4/
-```
-
-### Deployment steps
+Use the existing repo and URL for continuity:
 
 ```bash
 cd ~/Documents/GitHub/captain-match-repo-v4
 
-# Safety branch
 git checkout main
 git pull
-git checkout -b update-v4-01
+git checkout -b update-v4-03
 
-# Copy the contents of captain-match-planner-v4_01-local into this repo folder.
+# Copy the contents of captain-match-planner-v4_03-local into this repo folder.
 # Keep the .git folder.
-# Replace index.html, database-check.html, manifest.webmanifest,
-# service-worker.js, README.md, src/, and assets/ with the v4.01 versions.
 
 git status
 git add .
-git commit -m "Update Captain Match Planner to v4.01"
-git push origin update-v4-01
+git commit -m "Update Captain Match Planner to v4.03"
+git push origin update-v4-03
 ```
 
-Then merge the branch into `main`, or if you prefer direct command-line merge:
+Then merge to main:
 
 ```bash
 git checkout main
-git merge update-v4-01
+git merge update-v4-03
 git push origin main
 ```
 
-After GitHub Pages updates, open:
+After GitHub Pages deploys, open the live URL and confirm Home shows **App v4.03**.
 
-```text
-https://jmhm-intuit.github.io/captain-match-repo-v4/
-```
+## Key tests
 
-## Post-deploy checks
-
-1. Confirm Home shows App v4.01.
-2. Confirm players and tournaments from v4.0 are still present.
-3. Open the new Data tab and verify tournaments, matches, and players are visible.
-4. Open Tournament and switch Summary / Full view.
-5. Generate or open a match plan and test Download image plus Open image.
-
-## PWA update note
-
-PWAs can briefly serve an old cached version. The v4.01 service worker uses a new cache name, so it should update after reload. If the app still shows v4.0:
-
-1. Open the app in Chrome.
-2. Refresh once or twice.
-3. Close and reopen the installed PWA.
-4. If needed, open Chrome DevTools > Application > Service Workers and update/unregister the old worker.
-
-Do not uninstall the PWA unless you have exported a backup, because uninstalling can remove local IndexedDB data on some devices.
+1. Build a lineup with **Best positional fit** and confirm support players do not take close roster-player starting spots.
+2. Build a lineup with **Sign-up order** and confirm sign-up order helps close decisions but does not break position quality.
+3. Generate substitutions with **Balanced** and confirm bench players receive more planned time than before.
+4. Switch to **Live final 12** and confirm Confirm Players shows planned minutes plus all-in estimates.
+5. Switch to **Plan final 12** and confirm the Last 12 window becomes a planned substitution window.

@@ -1283,7 +1283,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
   .tournament-actions .btn { width:100%; }
 }
 
-/* v4.01: installable app polish, tournament redesign, compact roster, data view */
+/* v4.01-v4.02: installable app polish, tournament redesign, compact roster, data view */
 .nav { grid-template-columns: repeat(5, 1fr); width: min(760px, calc(100vw - 24px)); }
 .tournament-page.redesigned { gap: 14px; }
 .tournament-command.compact { overflow: visible; }
@@ -1355,4 +1355,44 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
   .setup-summary-grid { grid-template-columns: 1fr; }
   .skill-mini-grid { grid-template-columns: repeat(5, minmax(38px,1fr)); }
   .skill-mini { padding:5px; flex-direction:column; }
+}
+
+/* v4.02: home data-check pill and parser/share polish */
+.home-hero { position: relative; }
+.data-check-pill {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  border: 1px solid rgba(255,255,255,.38);
+  color: #fff;
+  background: rgba(255,255,255,.18);
+  border-radius: 999px;
+  padding: 7px 11px;
+  font-size: 12px;
+  font-weight: 1000;
+  letter-spacing: .03em;
+  text-decoration: none;
+  box-shadow: 0 6px 20px rgba(0,0,0,.16);
+}
+.data-check-pill:hover { background: rgba(255,255,255,.28); }
+.muted-summary span { background:#f2f6fb; color:#52637c; }
+.share-step .step-header .row { gap: 10px; flex-wrap: wrap; }
+.share-step .step-header .btn { white-space: nowrap; }
+@media (max-width: 640px) {
+  .data-check-pill { top: 10px; right: 10px; font-size: 11px; padding: 6px 9px; }
+  .share-step .step-header .row { width: 100%; }
+  .share-step .step-header .btn { width: 100%; justify-content: center; }
+}
+
+/* v4.03 plan settings */
+.plan-settings-card .plan-settings-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px; align-items:start; }
+.plan-settings-card section { background:#f8fbff; border:1px solid var(--line); border-radius:20px; padding:14px; }
+.plan-settings-card .formation-grid { grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
+.plan-summary-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 14px; }
+.btn.tiny { padding:4px 8px; border-radius:10px; font-size:12px; line-height:1; min-height:0; }
+.minute-pill { white-space:nowrap; }
+@media (max-width: 720px) {
+  .plan-settings-card .plan-settings-grid { grid-template-columns:1fr; }
+  .plan-settings-card .tabs button { flex:1 1 auto; }
 }
