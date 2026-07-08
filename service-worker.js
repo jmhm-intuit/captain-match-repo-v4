@@ -1,5 +1,5 @@
 /* Captain Match Planner PWA service worker */
-const CACHE_NAME = 'captain-match-planner-v5-0-multiteam-cache';
+const CACHE_NAME = 'captain-match-planner-v5-1-team-identity-cache';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -9,6 +9,7 @@ const CORE_ASSETS = [
   './src/styles.css',
   './assets/soccer-background.png',
   './assets/field-background.png',
+  './assets/team-backgrounds/intuit-united-blue.png',
   './assets/icons/icon-192.png',
   './assets/icons/icon-512.png',
   './assets/icons/maskable-icon-512.png',

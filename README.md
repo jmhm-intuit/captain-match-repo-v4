@@ -1,60 +1,81 @@
-# Captain Match Planner v5.0
+# Captain Match Planner v5.1
 
 Installable local-first PWA for 7v7 soccer match planning.
 
-## What changed in v5.0
+## What changed in v5.1
 
-v5.0 introduces the multi-team foundation while preserving the v4.05 planning logic and local-first deployment model.
+v5.1 refines the V5 multi-team foundation with team branding, clearer membership management, better shared-player flows, and richer player profiles.
 
-### Multi-team foundation
+### Team identity and branding
 
-- Added a persistent team switcher in the top bar.
-- V5 supports up to 5 active teams in the UI.
-- Default teams created during migration:
-  - Green FC with Forest Green branding.
-  - Intuit United with Blue branding.
-- Existing v4.05 data migrates into Green FC.
-- Existing support players are also added to Intuit United as support players.
-- Tournaments and matches are filtered by the selected team.
-- Each team has editable name and color.
+- Added team-aware app coloring using the selected team's color.
+- Green FC defaults to Forest Green.
+- Intuit United defaults to Blue.
+- Intuit United uses the provided blue-team match background image.
+- Each team can now upload a custom background image from the Team page.
+- Team background images are stored locally and included in export/import backups.
+- Team color selection now shows a clearer color preview and quick swatches.
+- Team creation is now positioned as a Home-page management action instead of a frequent top-bar action.
 
-### Shared player pool
+### Team page membership model
 
-- Players are now treated as a global player pool.
-- A player can belong to multiple teams with different team roles.
-- Team membership is shown as neutral pills, for example:
+- Replaced the visible Shared Player Pool section with a clearer selected-team structure:
+  - Roster players
+  - Support players
+  - Players not in this team
+- A player's row still shows cross-team membership pills, for example:
   - Green FC · Roster
   - Intuit United · Support
-- Player profile drawer shows avatar, skills, and all team memberships.
-- Team section includes a shared player pool and an add-existing-player flow.
-- Removing a player from a team no longer deletes the global player profile.
+- Players not in the selected team can be added quickly as Support or Roster.
+- Fixed membership visibility so a player with an Intuit United support badge appears in the Intuit United support section.
 
-### Match-planning navigation
+### Shared-player behavior
 
-- Returning to Matches during the same session reopens the last match-planning view.
-- The match-planning page still has a Back to matches button to return to the match overview.
-- Confirm Players rows now let you open a player profile from the match-planning flow.
+- Search/replacement flows now use the full global player pool.
+- If an existing player is selected for a match but is not part of that team, the app automatically adds them as Support for that team.
+- New players default to Support across all active teams.
+- New-player creation opens the player profile so team-by-team membership can be adjusted immediately.
+- Player profile membership controls now show all active teams with Roster / Support / Not on team options.
 
-### Avatar library
+### Player profile enhancements
 
-- Replaced the default avatar picker with the updated 30-avatar library.
-- All built-in avatars are labeled neutrally as Avatar 01 through Avatar 30.
-- Uploaded custom avatars remain local and are included in backups.
+- Added two global player attributes:
+  - Soccer experience: Less than 5 years, 5 to 10 years, All my life.
+  - Running capacity: Not much, 15 min, 30 min, 45 min, 45+ min.
+- Existing players default to:
+  - Soccer experience: All my life.
+  - Running capacity: 45 min.
+- These fields are shown as visual player-background chips and editable from the profile drawer.
+- Jose defaults to Avatar 25.
+- Baseline male players avoid Avatar 01 through Avatar 06.
+- Fixed avatar picker layering so selecting an avatar from the player profile is not greyed out.
+
+### Delete and navigation fixes
+
+- The first remove-player dialog now clarifies that permanent deletion requires removing the player from all teams first.
+- A protected Delete permanently option appears only when a global player has no active team memberships.
+- The Back to matches button from match planning now returns to the matches overview instead of reopening the same plan.
+- The session still remembers the last match-planning view when the user navigates back to Matches normally.
+
+### Intuit United defaults
+
+- Default Intuit United tournament starts on July 22, 2026.
+- Existing Green FC support players remain available as support for Intuit United.
 
 ## Data migration
 
-When opening v5.0 over an existing v4.05 local database, the app creates team records and team membership records automatically.
+When opening v5.1 over an existing v5.0 or v4.05 local database, the app updates teams, team memberships, player defaults, and background settings automatically.
 
-Recommended before deployment: export a backup from the live v4.05 app.
+Recommended before deployment: export a backup from the live app.
 
 ## Deployment strategy
 
-v5.0 is intended as an update over v4.05 using the same GitHub Pages URL and the same local IndexedDB database name. Existing local data should remain available after migration.
+v5.1 is intended as an update over v5.0 using the same GitHub Pages URL and the same local IndexedDB database name. Existing local data should remain available after migration.
 
 ## Local test
 
 ```bash
-cd captain-match-planner-v5_0-local
+cd captain-match-planner-v5_1-local
 python3 -m http.server 5174
 ```
 
@@ -73,23 +94,23 @@ cd ~/Documents/GitHub/captain-match-repo-v4
 
 git checkout main
 git pull
-git checkout -b update-v5-0
+git checkout -b update-v5-1
 
-# Copy the contents of captain-match-planner-v5_0-local into this repo folder.
+# Copy the contents of captain-match-planner-v5_1-local into this repo folder.
 # Keep the .git folder.
 
 git status
 git add .
-git commit -m "Update Captain Match Planner to v5.0"
-git push origin update-v5-0
+git commit -m "Update Captain Match Planner to v5.1"
+git push origin update-v5-1
 ```
 
 Then merge to main:
 
 ```bash
 git checkout main
-git merge update-v5-0
+git merge update-v5-1
 git push origin main
 ```
 
-After GitHub Pages deploys, open the live URL and confirm Home shows **App v5.0**. If the installed PWA still shows an older version, close/reopen the app or refresh once so the new service worker cache takes over.
+After GitHub Pages deploys, open the live URL and confirm Home shows **App v5.1**. If the installed PWA still shows an older version, close/reopen the app or refresh once so the new service worker cache takes over.
