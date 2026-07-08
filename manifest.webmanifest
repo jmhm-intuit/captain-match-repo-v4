@@ -1,7 +1,7 @@
 {
   "name": "Captain Match Planner",
   "short_name": "Match Planner",
-  "description": "Installable local 7v7 soccer match planner for captains.",
+  "description": "Installable local multi-team 7v7 soccer match planner for captains.",
   "id": "./index.html",
   "start_url": "./index.html",
   "scope": "./",

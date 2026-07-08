@@ -1,9 +1,9 @@
 (function () {
   var STORAGE_KEY = "squadflow_captain_v2_local";
   var DB_NAME = "captain_match_planner_local_db";
-  var DB_VERSION = 3;
-  var DB_SCHEMA_VERSION = 6;
-  var APP_VERSION = "4.05";
+  var DB_VERSION = 4;
+  var DB_SCHEMA_VERSION = 7;
+  var APP_VERSION = "5.0";
   var POS_KEYS = ["forward", "wing", "center", "defense", "goalie"];
   var POS_SHORT = { forward: "FWD", wing: "WNG", center: "CTR", defense: "DEF", goalie: "GK" };
   var POS_FULL = { forward: "Forward", wing: "Wing", center: "Center", defense: "Defense", goalie: "Goalie" };
@@ -69,11 +69,23 @@
     { id: "avatar-16", label: "Avatar 16", src: "assets/avatars/avatar-16.png" },
     { id: "avatar-17", label: "Avatar 17", src: "assets/avatars/avatar-17.png" },
     { id: "avatar-18", label: "Avatar 18", src: "assets/avatars/avatar-18.png" },
-    { id: "avatar-19", label: "Joey", src: "assets/avatars/avatar-19.png" }
+    { id: "avatar-19", label: "Avatar 19", src: "assets/avatars/avatar-19.png" },
+    { id: "avatar-20", label: "Avatar 20", src: "assets/avatars/avatar-20.png" },
+    { id: "avatar-21", label: "Avatar 21", src: "assets/avatars/avatar-21.png" },
+    { id: "avatar-22", label: "Avatar 22", src: "assets/avatars/avatar-22.png" },
+    { id: "avatar-23", label: "Avatar 23", src: "assets/avatars/avatar-23.png" },
+    { id: "avatar-24", label: "Avatar 24", src: "assets/avatars/avatar-24.png" },
+    { id: "avatar-25", label: "Avatar 25", src: "assets/avatars/avatar-25.png" },
+    { id: "avatar-26", label: "Avatar 26", src: "assets/avatars/avatar-26.png" },
+    { id: "avatar-27", label: "Avatar 27", src: "assets/avatars/avatar-27.png" },
+    { id: "avatar-28", label: "Avatar 28", src: "assets/avatars/avatar-28.png" },
+    { id: "avatar-29", label: "Avatar 29", src: "assets/avatars/avatar-29.png" },
+    { id: "avatar-30", label: "Avatar 30", src: "assets/avatars/avatar-30.png" }
   ];
 
   var state = {
     view: "home",
+    activeTeamId: null,
     activeTournamentId: null,
     activeMatchId: null,
     activeSlot: null,
@@ -91,7 +103,9 @@
     lastSavedAt: null,
     scheduleViewMode: "summary",
     tournamentSetupEditing: false,
-    dataTable: "tournaments"
+    dataTable: "tournaments",
+    profilePlayerId: null,
+    lastPlanMatchId: null
   };
 
   var data = emptyData();
@@ -104,11 +118,13 @@
   function nowIso() { return new Date().toISOString(); }
   function clone(obj) { return JSON.parse(JSON.stringify(obj)); }
   function emptyData() {
-    return { globalPlayers: [], tournaments: [], tournamentPlayers: [], matches: [], matchPlayers: [], customAvatars: [] };
+    return { teams: [], teamPlayers: [], globalPlayers: [], tournaments: [], tournamentPlayers: [], matches: [], matchPlayers: [], customAvatars: [] };
   }
   function normalizeSnapshot(snapshot) {
     var clean = emptyData();
     snapshot = snapshot || {};
+    clean.teams = Array.isArray(snapshot.teams) ? snapshot.teams : [];
+    clean.teamPlayers = Array.isArray(snapshot.teamPlayers) ? snapshot.teamPlayers : [];
     clean.globalPlayers = Array.isArray(snapshot.globalPlayers) ? snapshot.globalPlayers : [];
     clean.tournaments = Array.isArray(snapshot.tournaments) ? snapshot.tournaments : [];
     clean.tournamentPlayers = Array.isArray(snapshot.tournamentPlayers) ? snapshot.tournamentPlayers : [];
@@ -119,7 +135,7 @@
   }
   function rowsForStore(storeName, snapshot) {
     snapshot = normalizeSnapshot(snapshot);
-    if (storeName === "globalPlayers" || storeName === "tournaments" || storeName === "tournamentPlayers" || storeName === "matches" || storeName === "matchPlayers" || storeName === "customAvatars") return snapshot[storeName] || [];
+    if (storeName === "teams" || storeName === "teamPlayers" || storeName === "globalPlayers" || storeName === "tournaments" || storeName === "tournamentPlayers" || storeName === "matches" || storeName === "matchPlayers" || storeName === "customAvatars") return snapshot[storeName] || [];
     if (storeName === "playerAliases") {
       var aliases = [];
       (snapshot.globalPlayers || []).forEach(function (gp) {
@@ -162,7 +178,7 @@
     return [];
   }
   function createDataService() {
-    var tableNames = ["globalPlayers", "tournaments", "tournamentPlayers", "matches", "matchPlayers", "customAvatars", "playerAliases", "matchLineups", "lineupAssignments", "substitutionWindows", "substitutionChanges"];
+    var tableNames = ["teams", "teamPlayers", "globalPlayers", "tournaments", "tournamentPlayers", "matches", "matchPlayers", "customAvatars", "playerAliases", "matchLineups", "lineupAssignments", "substitutionWindows", "substitutionChanges"];
     var indexedStore = createIndexedDbStore(tableNames);
     var fallbackStore = createLocalStorageStore();
     var activeStore = fallbackStore;
@@ -342,10 +358,12 @@
     if (root) root.innerHTML = '<div class="loading-screen"><div class="loading-card"><h1>Captain Match Planner</h1><p>Opening local database...</p></div></div>';
     DataService.load().then(function (loaded) {
       data = migrateData(loaded || seedData());
+      state.activeTeamId = preferredTeamId();
       data.tournaments.forEach(function (t) { reconcileTournamentSchedule(t.id); });
       state.dbReady = true;
       state.persistenceStatus = "ready";
-      state.activeTournamentId = preferredTournamentId() || (data.tournaments[0] && data.tournaments[0].id);
+      state.activeTeamId = state.activeTeamId || preferredTeamId();
+      state.activeTournamentId = preferredTournamentId() || (teamTournaments(state.activeTeamId)[0] && teamTournaments(state.activeTeamId)[0].id) || (data.tournaments[0] && data.tournaments[0].id);
       var preferredMatch = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null;
       state.activeMatchId = preferredMatch ? preferredMatch.id : (data.matches[0] && data.matches[0].id);
       return save();
@@ -357,7 +375,8 @@
       state.dbReady = true;
       state.storageBackend = "memory only";
       state.persistenceStatus = "error";
-      state.activeTournamentId = data.tournaments[0] && data.tournaments[0].id;
+      state.activeTeamId = preferredTeamId();
+      state.activeTournamentId = preferredTournamentId() || (teamTournaments(state.activeTeamId)[0] && teamTournaments(state.activeTeamId)[0].id) || (data.tournaments[0] && data.tournaments[0].id);
       state.activeMatchId = data.matches[0] && data.matches[0].id;
       render();
       toast("Local database could not open. Export a backup if you make changes.");
@@ -366,9 +385,10 @@
   function resetData() {
     if (!confirm("Reset all local Match Planner data?")) return;
     DataService.clear().then(function () {
-      data = seedData();
+      data = migrateData(seedData());
+      state.activeTeamId = preferredTeamId();
       data.tournaments.forEach(function (t) { reconcileTournamentSchedule(t.id); });
-      state.activeTournamentId = preferredTournamentId() || data.tournaments[0].id;
+      state.activeTournamentId = preferredTournamentId() || (teamTournaments(state.activeTeamId)[0] && teamTournaments(state.activeTeamId)[0].id) || data.tournaments[0].id;
       var resetMatch = nextMatch(state.activeTournamentId);
       state.activeMatchId = resetMatch ? resetMatch.id : data.matches[0].id;
       state.view = "home";
@@ -385,12 +405,23 @@
     render();
     setTimeout(function () { state.toast = null; render(); }, 1800);
   }
-  function visibleTournaments() { return data.tournaments.filter(function (t) { return !t.archived; }); }
-  function activeTournament() { return data.tournaments.find(function (t) { return t.id === state.activeTournamentId; }) || visibleTournaments()[0] || data.tournaments[0]; }
+  function activeTeam() { return data.teams.find(function (tm) { return tm.id === state.activeTeamId; }) || data.teams[0] || { id: "team_green_fc", name: "Green FC", color: "#0b5d3b", colorName: "Forest Green" }; }
+  function preferredTeamId() { return (state.activeTeamId && data.teams.find(function (tm) { return tm.id === state.activeTeamId; }) && state.activeTeamId) || (data.teams.find(function (tm) { return tm.name === "Green FC"; }) || data.teams[0] || {}).id; }
+  function teamById(id) { return data.teams.find(function (tm) { return tm.id === id; }); }
+  function teamTournaments(teamId) { return data.tournaments.filter(function (t) { return !t.archived && (!teamId || t.teamId === teamId); }); }
+  function visibleTournaments() { return teamTournaments((activeTeam() || {}).id); }
+  function activeTournament() { var t = data.tournaments.find(function (x) { return x.id === state.activeTournamentId && (!activeTeam().id || x.teamId === activeTeam().id); }); return t || visibleTournaments()[0] || data.tournaments.find(function (x) { return !x.archived; }) || data.tournaments[0]; }
   function activeMatch() { return data.matches.find(function (m) { return m.id === state.activeMatchId; }) || data.matches.find(function (m) { return m.tournamentId === state.activeTournamentId; }); }
   function tournamentPlayers(tId) { return data.tournamentPlayers.filter(function (p) { return p.tournamentId === tId; }); }
   function tournamentPlayer(id) { return data.tournamentPlayers.find(function (p) { return p.id === id; }); }
   function globalPlayer(id) { return data.globalPlayers.find(function (p) { return p.id === id; }); }
+  function teamPlayers(teamId) { return data.teamPlayers.filter(function (p) { return p.teamId === teamId && p.active !== false; }); }
+  function teamPlayer(teamId, globalPlayerId) { return data.teamPlayers.find(function (p) { return p.teamId === teamId && p.globalPlayerId === globalPlayerId && p.active !== false; }); }
+  function teamMembershipPills(globalPlayerId) { var rows = teamPlayersForGlobal(globalPlayerId); return rows.length ? rows.map(function (tp) { var tm = teamById(tp.teamId) || {}; var style = tm.color ? ' style="border-color:' + escapeAttr(tm.color) + ';color:' + escapeAttr(tm.color) + '"' : ''; return '<span class="team-pill"' + style + '>' + escapeHtml(tm.name || 'Team') + ' · ' + escapeHtml(tp.membership === 'team' ? 'Roster' : 'Support') + '</span>'; }).join('') : '<span class="team-pill muted">No team</span>'; }
+  function teamPlayersForGlobal(globalPlayerId) { return (data.teamPlayers || []).filter(function (tp) { return tp.globalPlayerId === globalPlayerId && tp.active !== false; }); }
+  function ensureTeamPlayer(teamId, globalPlayerId, membership, skills) { if (!teamId || !globalPlayerId) return null; var existing = data.teamPlayers.find(function (tp) { return tp.teamId === teamId && tp.globalPlayerId === globalPlayerId; }); if (existing) { existing.active = true; if (membership) existing.membership = membership; if (skills && !existing.skills) existing.skills = clone(skills); existing.updatedAt = nowIso(); return existing; } var row = { id: uid('team_player'), teamId: teamId, globalPlayerId: globalPlayerId, membership: membership || 'support', skills: clone(skills || (globalPlayer(globalPlayerId) && globalPlayer(globalPlayerId).defaultSkills) || defaultSkills()), active: true, createdAt: nowIso(), updatedAt: nowIso() }; data.teamPlayers.push(row); return row; }
+  function ensureTournamentPlayerFromTeam(tId, teamPlayerRow) { var t = data.tournaments.find(function (x) { return x.id === tId; }); if (!t || !teamPlayerRow) return null; var existing = data.tournamentPlayers.find(function (tp) { return tp.tournamentId === tId && tp.globalPlayerId === teamPlayerRow.globalPlayerId; }); var skills = clone(teamPlayerRow.skills || (globalPlayer(teamPlayerRow.globalPlayerId) && globalPlayer(teamPlayerRow.globalPlayerId).defaultSkills) || defaultSkills()); if (existing) { existing.membership = teamPlayerRow.membership || existing.membership; existing.skills = normalizeSkills(existing.skills || skills); existing.teamId = t.teamId; return existing; } var tpId = uid('tp'); var pos = derivePositions(skills, tId, tpId); var gp = globalPlayer(teamPlayerRow.globalPlayerId); var tp = { id: tpId, teamId: t.teamId, tournamentId: tId, globalPlayerId: teamPlayerRow.globalPlayerId, membership: teamPlayerRow.membership || 'support', skills: skills, primaryPosition: pos.primary, secondaryPosition: pos.secondary, goalieEligible: skills.goalie >= 3, tournamentGoalie: gp && /franco/i.test(gp.name) && skills.goalie >= 3, createdAt: nowIso(), updatedAt: nowIso() }; data.tournamentPlayers.push(tp); return tp; }
+  function syncTournamentRosterFromTeam(tId) { var t = data.tournaments.find(function (x) { return x.id === tId; }); if (!t || !t.teamId) return; teamPlayers(t.teamId).forEach(function (row) { ensureTournamentPlayerFromTeam(tId, row); }); }
   function matchDateSort(a, b) {
     return ((a.date || '') + (a.time || '') + (a.createdAt || '')).localeCompare((b.date || '') + (b.time || '') + (b.createdAt || ''));
   }
@@ -660,12 +691,43 @@
       tp.secondaryPosition = pos.secondary;
     });
   }
+  function ensureV5Teams(d) {
+    d.teams = Array.isArray(d.teams) ? d.teams : [];
+    d.teamPlayers = Array.isArray(d.teamPlayers) ? d.teamPlayers : [];
+    var green = d.teams.find(function (tm) { return tm.id === 'team_green_fc' || tm.name === 'Green FC'; });
+    if (!green) { green = { id: 'team_green_fc', name: 'Green FC', color: '#0b5d3b', colorName: 'Forest Green', active: true, createdAt: nowIso(), updatedAt: nowIso() }; d.teams.push(green); }
+    green.id = green.id || 'team_green_fc'; green.name = green.name || 'Green FC'; green.color = green.color || '#0b5d3b'; green.colorName = green.colorName || 'Forest Green'; green.active = green.active !== false;
+    var intuit = d.teams.find(function (tm) { return tm.id === 'team_intuit_united' || tm.name === 'Intuit United'; });
+    if (!intuit) { intuit = { id: 'team_intuit_united', name: 'Intuit United', color: '#1769ff', colorName: 'Blue', active: true, createdAt: nowIso(), updatedAt: nowIso() }; d.teams.push(intuit); }
+    intuit.id = intuit.id || 'team_intuit_united'; intuit.name = intuit.name || 'Intuit United'; intuit.color = intuit.color || '#1769ff'; intuit.colorName = intuit.colorName || 'Blue'; intuit.active = intuit.active !== false;
+    d.tournaments.forEach(function (t) { if (!t.teamId) t.teamId = (t.teamName === 'Intuit United') ? intuit.id : green.id; if (!t.teamName) t.teamName = (d.teams.find(function (tm) { return tm.id === t.teamId; }) || green).name; });
+    if (!d.tournaments.some(function (t) { return t.teamId === intuit.id; })) {
+      var first = nextWeekdayDate('Wednesday');
+      d.tournaments.push({ id: 't_intuit_united_s1', teamId: intuit.id, name: 'Season 1', teamName: 'Intuit United', defaultDay: 'Wednesday', location: '', startDate: first, weekCount: 7, matchTarget: 7, skipDates: [], createdAt: nowIso(), updatedAt: nowIso(), archived: false });
+    }
+    d.tournamentPlayers.forEach(function (tp) {
+      var t = d.tournaments.find(function (x) { return x.id === tp.tournamentId; });
+      var teamId = t && t.teamId ? t.teamId : green.id;
+      tp.teamId = teamId;
+      var existing = d.teamPlayers.find(function (row) { return row.teamId === teamId && row.globalPlayerId === tp.globalPlayerId; });
+      if (!existing) d.teamPlayers.push({ id: uid('team_player'), teamId: teamId, globalPlayerId: tp.globalPlayerId, membership: tp.membership || 'support', skills: clone(tp.skills || defaultSkills()), active: true, createdAt: tp.createdAt || nowIso(), updatedAt: tp.updatedAt || nowIso() });
+    });
+    var supportIds = {};
+    d.tournamentPlayers.forEach(function (tp) { if ((tp.membership || 'support') === 'support') supportIds[tp.globalPlayerId] = tp.skills || defaultSkills(); });
+    Object.keys(supportIds).forEach(function (gpId) {
+      if (!d.teamPlayers.some(function (row) { return row.teamId === intuit.id && row.globalPlayerId === gpId; })) d.teamPlayers.push({ id: uid('team_player'), teamId: intuit.id, globalPlayerId: gpId, membership: 'support', skills: clone(supportIds[gpId] || defaultSkills()), active: true, createdAt: nowIso(), updatedAt: nowIso() });
+    });
+    d.teamPlayers.forEach(function (row) { row.active = row.active !== false; row.membership = row.membership === 'team' ? 'team' : 'support'; row.skills = normalizeSkills(row.skills || (d.globalPlayers.find(function (gp) { return gp.id === row.globalPlayerId; }) || {}).defaultSkills || defaultSkills()); });
+  }
   function migrateData(d) {
     d.globalPlayers = d.globalPlayers || [];
     d.tournaments = d.tournaments || [];
     d.tournamentPlayers = d.tournamentPlayers || [];
     d.matches = d.matches || [];
     d.matchPlayers = d.matchPlayers || [];
+    d.teams = Array.isArray(d.teams) ? d.teams : [];
+    d.teamPlayers = Array.isArray(d.teamPlayers) ? d.teamPlayers : [];
+    ensureV5Teams(d);
     d.customAvatars = Array.isArray(d.customAvatars) ? d.customAvatars : [];
     d.customAvatars.forEach(function (a, index) {
       if (!a.id) a.id = uid("avatar");
@@ -718,6 +780,7 @@
       normalizeFormationLineup(m);
       applyFinalPhaseMode(m, m.finalPhase, true);
     });
+    d.tournaments.forEach(function (t) { syncTournamentRosterFromTeam(t.id); });
     return d;
   }
   function weekdayName(dateStr) {
@@ -1424,7 +1487,7 @@
     return label;
   }
   function tournamentOptionsHtml(selectedId) {
-    return data.tournaments.map(function (x) {
+    return visibleTournaments().map(function (x) {
       return '<option value="' + x.id + '" ' + (x.id === selectedId ? 'selected' : '') + '>' + escapeHtml(tournamentOptionLabel(x)) + '</option>';
     }).join('');
   }
@@ -1822,7 +1885,9 @@
     var skills = clone((existingGp && existingGp.defaultSkills) || defaultSkills());
     var tpId = uid("tp");
     var pos = derivePositions(skills, tId, tpId);
-    data.tournamentPlayers.push({ id: tpId, tournamentId: tId, globalPlayerId: gpId, membership: "support", skills: skills, primaryPosition: pos.primary, secondaryPosition: pos.secondary, goalieEligible: skills.goalie >= 3, tournamentGoalie: false, createdAt: nowIso(), updatedAt: nowIso() });
+    var t = data.tournaments.find(function (x) { return x.id === tId; });
+    ensureTeamPlayer(t && t.teamId ? t.teamId : activeTeam().id, gpId, 'support', skills);
+    data.tournamentPlayers.push({ id: tpId, teamId: t && t.teamId ? t.teamId : activeTeam().id, tournamentId: tId, globalPlayerId: gpId, membership: "support", skills: skills, primaryPosition: pos.primary, secondaryPosition: pos.secondary, goalieEligible: skills.goalie >= 3, tournamentGoalie: false, createdAt: nowIso(), updatedAt: nowIso() });
     refreshPlayerPositions(tId);
     return { globalPlayerId: gpId, tournamentPlayerId: tpId };
   }
@@ -1871,19 +1936,24 @@
     app.innerHTML = renderShell();
     bindAfterRender();
   }
+  function renderTeamOptions() {
+    return (data.teams || []).filter(function (tm) { return tm.active !== false; }).slice(0, 5).map(function (tm) { return '<option value="' + tm.id + '" ' + (tm.id === activeTeam().id ? 'selected' : '') + '>' + escapeHtml(tm.name) + '</option>'; }).join('');
+  }
   function renderShell() {
     if (state.view === "home" || state.view === "tournaments" || state.view === "matches") syncActiveTournamentToPreferred(false);
     var t = activeTournament();
     var page = state.view === "home" ? renderHome() : state.view === "tournaments" ? renderTournaments() : state.view === "team" ? renderTeam() : state.view === "matches" ? renderMatches() : state.view === "data" ? renderDataView() : renderPlan();
+    var team = activeTeam();
     return '<div class="app-shell">' +
-      '<div class="topbar"><div class="brand"><div class="logo">MP</div><div><h1>Captain Match Planner</h1><p>' + escapeHtml(t ? t.teamName + ' / ' + t.name : 'Local 7v7 planner') + '</p></div></div>' +
-      '<div class="top-actions"><button class="btn secondary small" onclick="app.exportData()">Export</button><button class="btn secondary small" onclick="app.importDataPrompt()">Import</button></div></div>' +
+      '<div class="topbar"><div class="brand"><div class="logo">MP</div><div><h1>Captain Match Planner</h1><p>' + escapeHtml(team ? team.name : 'Team') + (t ? ' / ' + escapeHtml(t.name) : '') + '</p></div></div>' +
+      '<div class="top-actions"><div class="team-switcher"><label>Team</label><select onchange="app.setActiveTeam(this.value)">' + renderTeamOptions() + '</select></div><button class="btn secondary small" onclick="app.createTeamPrompt()">+ Team</button><button class="btn secondary small" onclick="app.exportData()">Export</button><button class="btn secondary small" onclick="app.importDataPrompt()">Import</button></div></div>' +
       page +
       '<div class="nav"><button class="' + navClass("home") + '" onclick="app.go(\'home\')">Home</button><button class="' + navClass("tournaments") + '" onclick="app.go(\'tournaments\')">Tournaments</button><button class="' + navClass("team") + '" onclick="app.go(\'team\')">Team</button><button class="' + navClass("matches") + '" onclick="app.go(\'matches\')">Matches</button></div>' +
       (state.toast ? '<div class="toast">' + escapeHtml(state.toast) + '</div>' : '') +
       (state.avatarTarget ? renderAvatarModal() : '') +
       (state.tournamentPanelOpen ? renderTournamentPanel() : '') +
       (state.confirmRemovePlayerId ? renderRemovePlayerDialog() : '') +
+      (state.profilePlayerId ? renderPlayerProfileDrawer() : '') +
       '</div>';
   }
   function navClass(view) { return state.view === view ? "active" : ""; }
@@ -1894,7 +1964,7 @@
     return backend + " · " + status;
   }
   function dataStoreNames() {
-    return ["tournaments", "matches", "tournamentPlayers", "globalPlayers", "matchPlayers", "customAvatars", "playerAliases", "matchLineups", "lineupAssignments", "substitutionWindows", "substitutionChanges"];
+    return ["teams", "teamPlayers", "tournaments", "matches", "tournamentPlayers", "globalPlayers", "matchPlayers", "customAvatars", "playerAliases", "matchLineups", "lineupAssignments", "substitutionWindows", "substitutionChanges"];
   }
   function formatCellValue(value) {
     if (value === null || value === undefined || value === '') return '<span class="muted-cell">—</span>';
@@ -1916,6 +1986,7 @@
 
   function renderHome() {
     var t = activeTournament();
+    if (!t) return '<div class="grid home-compact"><div class="card empty-state"><h2>' + escapeHtml(activeTeam().name || 'Team') + '</h2><p>No tournament yet for this team.</p><button class="btn" onclick="app.openTournamentPanel()">Create tournament</button></div></div>';
     var next = nextMatch(t.id);
     var left = remainingMatches(t.id);
     var nextCta = next ? '<button class="btn hero-btn" onclick="app.openMatch(\'' + next.id + '\')">Plan next match</button>' : '<button class="btn hero-btn" onclick="app.go(\'tournaments\')">Create schedule</button>';
@@ -1938,6 +2009,7 @@
 
   function renderTournaments() {
     var t = activeTournament();
+    if (!t) return '<div class="grid tournament-page redesigned"><div class="card empty-state"><h2>No tournament for ' + escapeHtml(activeTeam().name || 'this team') + '</h2><button class="btn" onclick="app.openTournamentPanel()">Create tournament</button></div></div>';
     var st = tournamentStats(t.id);
     var mode = state.scheduleViewMode || 'summary';
     var status = tournamentStatus(t);
@@ -1946,7 +2018,7 @@
         '<div class="tournament-metrics compact"><div><strong>' + formatDateLabel(st.start) + '</strong><span>Start</span></div><div><strong>' + (t.defaultDay || weekdayName(st.start || '')) + '</strong><span>Play day</span></div><div><strong>' + (t.matchTarget || 7) + '</strong><span>Length</span></div><div><strong>' + st.doubleHeaders + '</strong><span>Double headers</span></div></div></div>' +
       renderTournamentSetupCard(t, st) +
       '<div class="card schedule-card"><div class="row space"><div><h2>Schedule</h2><div class="subtext">Summary shows day and time. Full adds field, opponent, and exception actions. Skip weeks remain visible.</div></div><div class="row"><div class="tabs compact-tabs"><button class="' + (mode === 'summary' ? 'active' : '') + '" onclick="app.setScheduleView(\'summary\')">Summary</button><button class="' + (mode === 'full' ? 'active' : '') + '" onclick="app.setScheduleView(\'full\')">Full</button></div><button class="btn ghost small" onclick="app.refillSchedule(\'' + t.id + '\')">Repair / fill</button></div></div><div class="schedule-table schedule-' + mode + '">' + renderScheduleRows(t, mode) + '</div></div>' +
-      '<div class="card"><h2>All tournaments</h2><div class="tournament-list">' + data.tournaments.map(renderTournamentItem).join('') + '</div></div>' +
+      '<div class="card"><h2>All tournaments for ' + escapeHtml(activeTeam().name || 'team') + '</h2><div class="tournament-list">' + visibleTournaments().map(renderTournamentItem).join('') + '</div></div>' +
       '</div>';
   }
   function renderTournamentSetupCard(t, st) {
@@ -2014,21 +2086,29 @@
     var count = matches(t.id).length;
     var st = tournamentStats(t.id);
     var status = tournamentStatus(t);
-    return '<div class="tournament-item ' + (t.id === activeTournament().id ? 'active' : '') + ' ' + (t.archived ? 'archived' : '') + '"><div><div class="player-title">' + escapeHtml(t.teamName) + ' / ' + escapeHtml(t.name) + ' <span class="badge ' + status.className + '">' + escapeHtml(status.label) + '</span></div><div class="subtext">' + escapeHtml(t.defaultDay || '') + ' · ' + count + ' matches · ' + formatDateLabel(st.start) + ' → ' + formatDateLabel(st.end) + '</div></div><button class="btn small secondary" onclick="app.setActiveTournament(\'' + t.id + '\')">Select</button></div>';
+    return '<div class="tournament-item ' + (activeTournament() && t.id === activeTournament().id ? 'active' : '') + ' ' + (t.archived ? 'archived' : '') + '"><div><div class="player-title">' + escapeHtml(t.teamName) + ' / ' + escapeHtml(t.name) + ' <span class="badge ' + status.className + '">' + escapeHtml(status.label) + '</span></div><div class="subtext">' + escapeHtml(t.defaultDay || '') + ' · ' + count + ' matches · ' + formatDateLabel(st.start) + ' → ' + formatDateLabel(st.end) + '</div></div><button class="btn small secondary" onclick="app.setActiveTournament(\'' + t.id + '\')">Select</button></div>';
   }
 
   function renderTeam() {
+    var team = activeTeam();
     var t = activeTournament();
-    var players = tournamentPlayers(t.id);
-    var team = players.filter(function (p) { return p.membership === "team"; });
+    var players = t ? tournamentPlayers(t.id) : [];
+    var teamRows = players.filter(function (p) { return p.membership === "team"; });
     var support = players.filter(function (p) { return p.membership === "support"; });
     return '<div class="grid team-page">' +
-      '<div class="card team-header-card"><div class="row space"><div><div class="eyebrow">Team</div><h2>' + escapeHtml(t.teamName) + '</h2><div class="subtext">Team name is edited here only. Player positions are auto-selected from star strengths.</div></div><div class="row"><button class="btn" onclick="app.addPlayerPrompt()">Add player</button><button class="btn secondary" onclick="app.go(\'tournaments\')">Change tournament</button></div></div><div class="field-row"><div><label>Team name</label><input value="' + escapeAttr(t.teamName || '') + '" onchange="app.updateTournament(\'' + t.id + '\',\'teamName\',this.value)"></div><div><label>Active tournament</label><div class="readonly-chip">' + escapeHtml(t.name || '') + '</div></div></div><div class="kpi"><div class="pill"><div class="num">' + team.length + '</div><div class="txt">Team players</div></div><div class="pill"><div class="num">' + support.length + '</div><div class="txt">Support players</div></div></div></div>' +
-      '<div class="card team-section"><div class="row space"><div><h3>Team players</h3><div class="subtext">No manual primary/secondary: ties favor positions with less depth.</div></div></div><div class="list roster-list compact-roster">' + (team.length ? team.map(renderRosterPlayer).join('') : '<div class="empty-state">No team players.</div>') + '</div></div>' +
-      '<div class="card support-section"><div class="row space"><div><h3>Support players</h3><div class="subtext">Drop-ins remain available for match planning.</div></div></div><div class="list roster-list compact-roster">' + (support.length ? support.map(renderRosterPlayer).join('') : '<div class="empty-state">No support players.</div>') + '</div></div>' +
+      '<div class="card team-header-card"><div class="row space"><div><div class="eyebrow">Team workspace</div><h2>' + escapeHtml(team.name || 'Team') + '</h2><div class="subtext">V5 supports shared global players with team-specific roster/support membership.</div></div><div class="row"><button class="btn" onclick="app.addPlayerPrompt()">Add player</button><button class="btn secondary" onclick="app.addExistingPlayerToTeamPrompt()">Add existing</button><button class="btn secondary" onclick="app.go(\'tournaments\')">Tournaments</button></div></div>' +
+      '<div class="field-row"><div><label>Team name</label><input value="' + escapeAttr(team.name || '') + '" onchange="app.updateTeam(\'name\',this.value)"></div><div><label>Team color</label><input type="color" value="' + escapeAttr(team.color || '#1769ff') + '" onchange="app.updateTeam(\'color\',this.value)"></div><div><label>Active tournament</label><div class="readonly-chip">' + escapeHtml(t ? t.name : 'No tournament yet') + '</div></div></div>' +
+      '<div class="kpi"><div class="pill"><div class="num">' + teamRows.length + '</div><div class="txt">Roster</div></div><div class="pill"><div class="num">' + support.length + '</div><div class="txt">Support</div></div><div class="pill"><div class="num">' + teamPlayers(team.id).length + '</div><div class="txt">Team pool</div></div></div></div>' +
+      '<div class="card team-section"><div class="row space"><div><h3>Roster players</h3><div class="subtext">Regular players for ' + escapeHtml(team.name || 'this team') + '.</div></div></div><div class="list roster-list compact-roster">' + (teamRows.length ? teamRows.map(renderRosterPlayer).join('') : '<div class="empty-state">No roster players.</div>') + '</div></div>' +
+      '<div class="card support-section"><div class="row space"><div><h3>Support players</h3><div class="subtext">Support can be shared across teams. Existing Green FC support was added to Intuit United as support.</div></div></div><div class="list roster-list compact-roster">' + (support.length ? support.map(renderRosterPlayer).join('') : '<div class="empty-state">No support players.</div>') + '</div></div>' +
+      '<div class="card"><div class="row space"><div><h3>Shared player pool</h3><div class="subtext">Players can belong to multiple teams. Badges show each team role.</div></div></div><div class="player-pool-list">' + renderPlayerPoolList() + '</div></div>' +
       '</div>';
   }
-
+  function renderPlayerPoolList() {
+    return (data.globalPlayers || []).map(function (gp) {
+      return '<div class="pool-row"><button class="avatar small" onclick="app.openPlayerProfile(\'' + gp.id + '\')"><img src="' + avatarById(gp.avatarId).src + '" alt=""></button><div><button class="link-title" onclick="app.openPlayerProfile(\'' + gp.id + '\')">' + escapeHtml(gp.name) + '</button><div class="team-pill-row">' + teamMembershipPills(gp.id) + '</div></div><button class="btn tiny secondary" onclick="app.addGlobalPlayerToActiveTeam(\'' + gp.id + '\')">Add to team</button></div>';
+    }).join('') || '<div class="empty-state">No players yet.</div>';
+  }
   function renderRosterPlayer(tp) {
     var gp = globalPlayer(tp.globalPlayerId);
     if (!gp) return '';
@@ -2043,14 +2123,14 @@
     var gloveTitle = tp.tournamentGoalie ? 'Tournament goalie' : (skills.goalie >= 3 ? 'Set as tournament goalie' : 'Needs 3+ goalie stars');
     if (!editing) {
       return '<div class="roster-matrix-row ' + (skills.goalie >= 3 ? 'goalie-capable ' : '') + (membership === 'support' ? 'support-player' : 'team-player') + '"><div class="avatar small"><img src="' + avatarById(avatarId).src + '" alt=""></div>' +
-        '<div class="roster-identity"><div class="player-title">' + escapeHtml(name) + '</div><div class="row mini-meta">' + membershipBadge(membership) + '<span class="badge">' + escapeHtml(tp.primaryPosition || pos.primary) + ' / ' + escapeHtml(tp.secondaryPosition || pos.secondary) + '</span></div></div>' +
+        '<div class="roster-identity"><button class="link-title" onclick="app.openPlayerProfile(\'' + gp.id + '\')">' + escapeHtml(name) + '</button><div class="team-pill-row compact">' + teamMembershipPills(gp.id) + '</div><div class="row mini-meta">' + membershipBadge(membership) + '<span class="badge">' + escapeHtml(tp.primaryPosition || pos.primary) + ' / ' + escapeHtml(tp.secondaryPosition || pos.secondary) + '</span></div></div>' +
         '<div class="skill-mini-grid">' + POS_KEYS.map(function (k) { return skillReadoutCompact(skills, k); }).join('') + '</div>' +
         '<div class="roster-actions compact-actions"><button class="btn small secondary" onclick="app.editPlayer(\'' + tp.id + '\')">✎</button><button class="glove-button ' + gloveClass + '" title="' + gloveTitle + '" onclick="app.setTournamentGoalie(\'' + tp.id + '\')">🧤</button><button class="x-button" onclick="app.askRemoveTournamentPlayer(\'' + tp.id + '\')">×</button></div></div>';
     }
     return '<div class="roster-row editing ' + (skills.goalie >= 3 ? 'goalie-capable ' : '') + (membership === 'support' ? 'support-player' : 'team-player') + '"><button class="avatar" onclick="app.pickAvatar(\'' + gp.id + '\')"><img src="' + avatarById(avatarId).src + '" alt=""></button>' +
       '<div class="roster-main"><div class="row"><input class="name-inline" value="' + escapeAttr(name) + '" oninput="app.updatePlayerDraft(\'name\',this.value)">' + membershipBadge(membership) + '<span class="badge">' + escapeHtml(pos.primary) + ' / ' + escapeHtml(pos.secondary) + '</span></div>' +
       '<div class="subtext">Edit mode. Changes are saved only after pressing Save.</div><div class="skills compact-skills">' + POS_KEYS.map(function (k) { return skillDraftEditor(skills, k); }).join('') + '</div></div>' +
-      '<div class="roster-actions"><select onchange="app.updatePlayerDraft(\'membership\',this.value)"><option value="team" ' + (membership === 'team' ? 'selected' : '') + '>Team</option><option value="support" ' + (membership === 'support' ? 'selected' : '') + '>Support</option></select><button class="glove-button ' + gloveClass + '" title="' + gloveTitle + '" onclick="app.setTournamentGoalie(\'' + tp.id + '\')">🧤</button><button class="btn small green" onclick="app.savePlayerEdit()">Save</button><button class="btn small secondary" onclick="app.cancelPlayerEdit()">Cancel</button><button class="x-button" onclick="app.askRemoveTournamentPlayer(\'' + tp.id + '\')">×</button></div></div>';
+      '<div class="roster-actions"><select onchange="app.updatePlayerDraft(\'membership\',this.value)"><option value="team" ' + (membership === 'team' ? 'selected' : '') + '>Roster</option><option value="support" ' + (membership === 'support' ? 'selected' : '') + '>Support</option></select><button class="glove-button ' + gloveClass + '" title="' + gloveTitle + '" onclick="app.setTournamentGoalie(\'' + tp.id + '\')">🧤</button><button class="btn small green" onclick="app.savePlayerEdit()">Save</button><button class="btn small secondary" onclick="app.cancelPlayerEdit()">Cancel</button><button class="x-button" onclick="app.askRemoveTournamentPlayer(\'' + tp.id + '\')">×</button></div></div>';
   }
   function skillReadoutCompact(skills, key) {
     var value = Number(skills[key] || 1);
@@ -2069,6 +2149,7 @@
   }
   function renderMatches() {
     var t = activeTournament();
+    if (!t) return '<div class="grid matches-page"><div class="card empty-state"><h2>No tournament for ' + escapeHtml(activeTeam().name || 'this team') + '</h2><button class="btn" onclick="app.openTournamentPanel()">Create tournament</button></div></div>';
     var all = matches(t.id);
     var next = nextMatch(t.id);
     var upcoming = all.filter(function (m) { return isConfirmedScheduleMatch(m) && !isPastMatch(m) && (!next || m.id !== next.id); });
@@ -2151,7 +2232,7 @@
       return '<div class="item"><div><div class="row"><div class="player-title">' + escapeHtml(mp.name) + '</div><span class="badge warn">Review</span></div><div class="subtext">Possible match: ' + escapeHtml(sGp ? sGp.name : '') + '</div></div><div class="row"><button class="btn small green" onclick="app.acceptFuzzy(\'' + mp.matchId + '\',\'' + mp.id + '\')">Use existing</button><button class="btn small amber" onclick="app.rejectFuzzy(\'' + mp.matchId + '\',\'' + mp.id + '\')">Create support</button></div></div>';
     }
     var ctx = playerContext(mp);
-    return '<div class="item confirm-player-row"><div class="row"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><div class="player-title">' + escapeHtml(ctx.name) + '</div><div class="subtext">Signup #' + mp.signupOrder + ' · ' + escapeHtml(mp.availability) + ' · ' + mp.probability + '%</div></div></div><div class="row"><button class="btn tiny secondary" title="Move earlier in sign-up order" onclick="app.moveMatchPlayerOrder(\'' + mp.id + '\',-1)">↑</button><button class="btn tiny secondary" title="Move later in sign-up order" onclick="app.moveMatchPlayerOrder(\'' + mp.id + '\',1)">↓</button>' + membershipBadge(ctx.membership) + '<label class="row" style="margin:0;text-transform:none;letter-spacing:0"><input style="width:auto" type="checkbox" ' + (mp.included ? 'checked' : '') + ' onchange="app.toggleMatchPlayer(\'' + mp.id + '\',this.checked)"> Include</label><button class="btn small secondary" onclick="app.removeMatchPlayer(\'' + mp.id + '\')">Remove</button></div></div>';
+    return '<div class="item confirm-player-row"><div class="row"><button class="avatar small" onclick="app.openPlayerProfile(\'' + (ctx.globalPlayer ? ctx.globalPlayer.id : '') + '\')"><img src="' + ctx.avatar.src + '"></button><div><button class="link-title" onclick="app.openPlayerProfile(\'' + (ctx.globalPlayer ? ctx.globalPlayer.id : '') + '\')">' + escapeHtml(ctx.name) + '</button><div class="subtext">Signup #' + mp.signupOrder + ' · ' + escapeHtml(mp.availability) + ' · ' + mp.probability + '%</div><div class="team-pill-row compact">' + (ctx.globalPlayer ? teamMembershipPills(ctx.globalPlayer.id) : '') + '</div></div></div><div class="row"><button class="btn tiny secondary" title="Move earlier in sign-up order" onclick="app.moveMatchPlayerOrder(\'' + mp.id + '\',-1)">↑</button><button class="btn tiny secondary" title="Move later in sign-up order" onclick="app.moveMatchPlayerOrder(\'' + mp.id + '\',1)">↓</button>' + membershipBadge(ctx.membership) + '<label class="row" style="margin:0;text-transform:none;letter-spacing:0"><input style="width:auto" type="checkbox" ' + (mp.included ? 'checked' : '') + ' onchange="app.toggleMatchPlayer(\'' + mp.id + '\',this.checked)"> Include</label><button class="btn small secondary" onclick="app.removeMatchPlayer(\'' + mp.id + '\')">Remove</button></div></div>';
   }
 
   function gkCapableMatchPlayers(match) {
@@ -2843,26 +2924,46 @@
       '<div class="avatar-upload-box"><h3>Upload avatar</h3><div class="field-row"><div><label>Avatar name</label><input id="avatarUploadName" placeholder="Example: Joey"></div><div><label>Image</label><input id="avatarUploadFile" type="file" accept="image/*"></div></div><button class="btn secondary small" onclick="app.uploadAvatar()">Upload avatar</button><div class="subtext">Uploaded avatars are stored in the local database and included in backups.</div></div>' +
       '<div class="avatar-grid">' + allAvatars().map(function (a) { return '<button class="avatar-option ' + (currentAvatarId === a.id ? 'active' : '') + '" onclick="app.setAvatar(\'' + (target ? target.id : '') + '\',\'' + a.id + '\')"><div class="avatar large"><img src="' + a.src + '"></div><span>' + escapeHtml(a.label) + '</span></button>'; }).join('') + '</div></div></div>';
   }
+  function renderPlayerProfileDrawer() {
+    var gp = globalPlayer(state.profilePlayerId);
+    if (!gp) return '';
+    var rows = teamPlayersForGlobal(gp.id);
+    var currentMembership = teamPlayer(activeTeam().id, gp.id);
+    var skills = normalizeSkills((currentMembership && currentMembership.skills) || gp.defaultSkills || defaultSkills());
+    return '<div class="overlay side-overlay" onclick="app.closePlayerProfile()"><div class="side-panel player-profile-panel" onclick="event.stopPropagation()"><div class="row space"><div><div class="eyebrow">Player profile</div><h2>' + escapeHtml(gp.name) + '</h2><div class="team-pill-row">' + teamMembershipPills(gp.id) + '</div></div><button class="btn secondary" onclick="app.closePlayerProfile()">Close</button></div>' +
+      '<div class="profile-hero"><button class="avatar xl" onclick="app.pickAvatar(\'' + gp.id + '\')"><img src="' + avatarById(gp.avatarId).src + '" alt=""></button><div><div class="subtext">Global player profile. Ratings and avatar are shared across teams.</div><div class="skills compact-skills profile-skills">' + POS_KEYS.map(function (k) { return skillReadoutCompact(skills, k); }).join('') + '</div></div></div>' +
+      '<div class="card subtle-card"><h3>Team memberships</h3>' + (rows.length ? rows.map(function (row) { var tm = teamById(row.teamId) || {}; return '<div class="membership-row"><span class="team-dot" style="background:' + escapeAttr(tm.color || '#1769ff') + '"></span><strong>' + escapeHtml(tm.name || 'Team') + '</strong><select onchange="app.updateTeamMembership(\'' + row.id + '\',this.value)"><option value="team" ' + (row.membership === 'team' ? 'selected' : '') + '>Roster</option><option value="support" ' + (row.membership === 'support' ? 'selected' : '') + '>Support</option></select></div>'; }).join('') : '<div class="empty-state">Not assigned to a team yet.</div>') + '</div>' +
+      '<div class="row"><button class="btn" onclick="app.addGlobalPlayerToActiveTeam(\'' + gp.id + '\')">Add to ' + escapeHtml(activeTeam().name || 'team') + '</button><button class="btn secondary" onclick="app.closePlayerProfile(); app.go(\'team\');">Open Team section</button></div></div></div>';
+  }
   function renderTournamentPanel() {
-    var t = activeTournament();
+    var t = activeTournament() || { defaultDay: 'Tuesday', location: '' };
     return '<div class="overlay side-overlay" onclick="app.closeTournamentPanel()"><div class="side-panel" onclick="event.stopPropagation()"><div class="row space"><div><div class="eyebrow">Create tournament</div><h2>New tournament</h2><div class="subtext">Creates a 7-match weekly schedule. Times are blank until selected.</div></div><button class="btn secondary" onclick="app.closeTournamentPanel()">Close</button></div>' +
       '<div class="grid"><div><label>Tournament name</label><input id="newTournamentName" value="Season ' + (data.tournaments.length + 1) + '"></div><div class="field-row"><div><label>Fixed match day</label><select id="newDefaultDay">' + weekdayOptions(t.defaultDay || 'Tuesday') + '</select></div><div><label>First match date</label><input id="newFirstDate" type="date" value="' + nextWeekdayDate(t.defaultDay || 'Tuesday') + '"></div></div><div class="field-row"><div><label>Target matches</label><select id="newMatchCount"><option value="7" selected>7 regular matches</option><option value="8">8 with extension</option><option value="9">9 with finals</option></select></div><div><label>Default field</label><input id="newLocation" placeholder="Optional" value="' + escapeAttr(t.location || '') + '"></div></div><label class="row check-row"><input id="copyRoster" type="checkbox" checked> Copy active roster as starting point</label><button class="btn" onclick="app.createTournament()">Create tournament and schedule</button></div></div></div>';
   }
   function renderRemovePlayerDialog() {
     var tp = tournamentPlayer(state.confirmRemovePlayerId);
     var gp = tp ? globalPlayer(tp.globalPlayerId) : null;
-    return '<div class="overlay" onclick="app.cancelRemoveTournamentPlayer()"><div class="modal confirm-modal" onclick="event.stopPropagation()"><h2>Remove ' + escapeHtml(gp ? gp.name : 'player') + '?</h2><p class="subtext">Choose what should happen to this player.</p><div class="row"><button class="btn amber" onclick="app.moveTournamentPlayerToSupport(\'' + (tp ? tp.id : '') + '\')">Move to support</button><button class="btn danger" onclick="app.deleteTournamentPlayer(\'' + (tp ? tp.id : '') + '\')">Delete</button><button class="btn secondary" onclick="app.cancelRemoveTournamentPlayer()">Cancel</button></div></div></div>';
+    return '<div class="overlay" onclick="app.cancelRemoveTournamentPlayer()"><div class="modal confirm-modal" onclick="event.stopPropagation()"><h2>Remove ' + escapeHtml(gp ? gp.name : 'player') + '?</h2><p class="subtext">Default action removes the player from this team only. The global player profile remains available for other teams.</p><div class="row"><button class="btn amber" onclick="app.moveTournamentPlayerToSupport(\'' + (tp ? tp.id : '') + '\')">Move to support</button><button class="btn danger" onclick="app.deleteTournamentPlayer(\'' + (tp ? tp.id : '') + '\')">Remove from team</button><button class="btn secondary" onclick="app.cancelRemoveTournamentPlayer()">Cancel</button></div></div></div>';
   }
   function bindAfterRender() {}
   function escapeHtml(str) { return String(str == null ? '' : str).replace(/[&<>"']/g, function (m) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[m]; }); }
   function escapeAttr(str) { return escapeHtml(str).replace(/`/g, '&#096;'); }
 
   window.app = {
-    go: function (view) { state.view = view; if (view === "home" || view === "tournaments" || view === "matches") syncActiveTournamentToPreferred(false); render(); },
+    go: function (view) { if (view === 'matches' && state.lastPlanMatchId && data.matches.find(function (m) { return m.id === state.lastPlanMatchId; })) { this.openMatch(state.lastPlanMatchId); return; } state.view = view; if (view === "home" || view === "tournaments" || view === "matches") syncActiveTournamentToPreferred(false); render(); },
+    openMatchesOverview: function () { state.view = 'matches'; state.lastPlanMatchId = null; syncActiveTournamentToPreferred(false); render(); },
+    setActiveTeam: function (teamId) { var tm = teamById(teamId); if (!tm) return; state.activeTeamId = tm.id; state.activeTournamentId = preferredTournamentId() || (teamTournaments(tm.id)[0] && teamTournaments(tm.id)[0].id); var m = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null; state.activeMatchId = m && m.id; state.lastPlanMatchId = null; state.view = 'home'; save(); render(); },
+    updateTeam: function (field, value) { var tm = activeTeam(); if (!tm) return; if (field === 'name') { tm.name = value || tm.name; data.tournaments.filter(function (t) { return t.teamId === tm.id; }).forEach(function (t) { t.teamName = tm.name; }); } else if (field === 'color') tm.color = value || tm.color; tm.updatedAt = nowIso(); save(); render(); },
+    createTeamPrompt: function () { var activeCount = (data.teams || []).filter(function (tm) { return tm.active !== false; }).length; if (activeCount >= 5) return toast('V5 UI supports up to 5 active teams in the switcher.'); var name = prompt('New team name'); if (!name) return; var color = prompt('Team color hex', '#1769ff') || '#1769ff'; var id = uid('team'); data.teams.push({ id: id, name: prettyName(name), color: color, colorName: '', active: true, createdAt: nowIso(), updatedAt: nowIso() }); state.activeTeamId = id; state.activeTournamentId = null; state.activeMatchId = null; save(); render(); toast('Team created. Add a tournament when ready.'); },
     openTournamentPanel: function () { state.tournamentPanelOpen = true; render(); },
     closeTournamentPanel: function () { state.tournamentPanelOpen = false; render(); },
+    openPlayerProfile: function (gpId) { if (!gpId) return; state.profilePlayerId = gpId; render(); },
+    closePlayerProfile: function () { state.profilePlayerId = null; render(); },
+    addGlobalPlayerToActiveTeam: function (gpId) { var gp = globalPlayer(gpId); if (!gp) return; var role = confirm('Add ' + gp.name + ' as roster player for ' + activeTeam().name + '? OK = Roster, Cancel = Support') ? 'team' : 'support'; var row = ensureTeamPlayer(activeTeam().id, gpId, role, gp.defaultSkills); visibleTournaments().forEach(function (t) { ensureTournamentPlayerFromTeam(t.id, row); refreshPlayerPositions(t.id); }); save(); render(); toast('Player added to ' + activeTeam().name + '.'); },
+    addExistingPlayerToTeamPrompt: function () { var q = prompt('Search existing player name'); if (!q) return; var n = normalizeAlias(q); var matches = data.globalPlayers.filter(function (gp) { return gp.normalizedName.indexOf(n) >= 0 || n.indexOf(gp.normalizedName) >= 0 || (gp.aliases || []).some(function (a) { return normalizeAlias(a).indexOf(n) >= 0; }); }); if (!matches.length) return toast('No existing player found. Use Add player to create a new one.'); this.addGlobalPlayerToActiveTeam(matches[0].id); },
+    updateTeamMembership: function (teamPlayerId, membership) { var row = data.teamPlayers.find(function (tp) { return tp.id === teamPlayerId; }); if (!row) return; row.membership = membership === 'team' ? 'team' : 'support'; row.updatedAt = nowIso(); data.tournaments.filter(function (t) { return t.teamId === row.teamId; }).forEach(function (t) { var tp = data.tournamentPlayers.find(function (x) { return x.tournamentId === t.id && x.globalPlayerId === row.globalPlayerId; }); if (tp) tp.membership = row.membership; }); save(); render(); },
     resetData: resetData,
-    setActiveTournament: function (id) { state.activeTournamentId = id; var m = nextMatch(id); state.activeMatchId = m && m.id; render(); },
+    setActiveTournament: function (id) { state.activeTournamentId = id; var t = data.tournaments.find(function (x) { return x.id === id; }); if (t && t.teamId) state.activeTeamId = t.teamId; syncTournamentRosterFromTeam(id); var m = nextMatch(id); state.activeMatchId = m && m.id; render(); },
     setScheduleView: function (mode) { state.scheduleViewMode = mode === 'full' ? 'full' : 'summary'; render(); },
     setDataTable: function (name) { state.dataTable = name || 'tournaments'; render(); },
     startTournamentEdit: function () { state.tournamentSetupEditing = true; render(); },
@@ -2894,22 +2995,17 @@
     },
     createTournament: function () {
       var name = document.getElementById('newTournamentName').value || 'Tournament';
-      var teamName = activeTournament() ? activeTournament().teamName : 'Team';
+      var team = activeTeam(); var teamName = team ? team.name : 'Team';
       var defaultDay = document.getElementById('newDefaultDay').value || 'Tuesday';
       var location = document.getElementById('newLocation').value || '';
       var firstDate = document.getElementById('newFirstDate').value || nextWeekdayDate(defaultDay);
       var count = Number(document.getElementById('newMatchCount').value || 7);
       var copyRoster = document.getElementById('copyRoster') ? document.getElementById('copyRoster').checked : true;
       var id = uid('t');
-      data.tournaments.push({ id: id, name: name, teamName: teamName, defaultDay: defaultDay, location: location, startDate: firstDate, weekCount: count, matchTarget: count, skipDates: [], createdAt: nowIso(), updatedAt: nowIso() });
-      if (copyRoster && activeTournament()) {
-        tournamentPlayers(activeTournament().id).forEach(function (tp) {
-          var skills = normalizeSkills(clone(tp.skills));
-          var newTpId = uid('tp');
-          var pos = derivePositions(skills, id, newTpId);
-          data.tournamentPlayers.push({ id: newTpId, tournamentId: id, globalPlayerId: tp.globalPlayerId, membership: tp.membership, skills: skills, primaryPosition: pos.primary, secondaryPosition: pos.secondary, goalieEligible: skills.goalie >= 3, tournamentGoalie: tp.tournamentGoalie && skills.goalie >= 3, createdAt: nowIso(), updatedAt: nowIso() });
-        });
-      }
+      data.tournaments.push({ id: id, name: name, teamId: team ? team.id : 'team_green_fc', teamName: teamName, defaultDay: defaultDay, location: location, startDate: firstDate, weekCount: count, matchTarget: count, skipDates: [], createdAt: nowIso(), updatedAt: nowIso() });
+      syncTournamentRosterFromTeam(id);
+      // V5 uses team membership as the tournament roster source.
+
       for (var i = 0; i < count; i++) data.matches.push(createMatchSeed(id, addDays(firstDate, i * 7), i));
       reconcileTournamentSchedule(id);
       state.activeTournamentId = id; state.activeMatchId = matches(id)[0].id; state.tournamentPanelOpen = false; save(); render(); toast('Tournament created.');
@@ -2921,14 +3017,14 @@
     setTournamentGoalie: function (tpId) { var tp = tournamentPlayer(tpId); if (!tp) return; if ((tp.skills.goalie || 0) < 3) return toast('A tournament goalie needs 3+ goalie stars.'); tournamentPlayers(tp.tournamentId).forEach(function (p) { p.tournamentGoalie = false; }); tp.tournamentGoalie = true; tp.goalieEligible = true; var gp = globalPlayer(tp.globalPlayerId); save(); render(); toast((gp ? gp.name : 'Player') + ' selected as goalie for the rest of the tournament.'); },
     askRemoveTournamentPlayer: function (tpId) { state.confirmRemovePlayerId = tpId; render(); },
     cancelRemoveTournamentPlayer: function () { state.confirmRemovePlayerId = null; render(); },
-    moveTournamentPlayerToSupport: function (tpId) { var tp = tournamentPlayer(tpId); if (!tp) return; tp.membership = 'support'; state.confirmRemovePlayerId = null; save(); render(); toast('Moved to support.'); },
-    deleteTournamentPlayer: function (tpId) { data.tournamentPlayers = data.tournamentPlayers.filter(function (p) { return p.id !== tpId; }); state.confirmRemovePlayerId = null; save(); render(); toast('Player deleted from this tournament.'); },
+    moveTournamentPlayerToSupport: function (tpId) { var tp = tournamentPlayer(tpId); if (!tp) return; tp.membership = 'support'; var tt = data.tournaments.find(function (x) { return x.id === tp.tournamentId; }); ensureTeamPlayer(tt && tt.teamId ? tt.teamId : activeTeam().id, tp.globalPlayerId, 'support', tp.skills); state.confirmRemovePlayerId = null; save(); render(); toast('Moved to support.'); },
+    deleteTournamentPlayer: function (tpId) { var tp = tournamentPlayer(tpId); if (!tp) return; var tt = data.tournaments.find(function (x) { return x.id === tp.tournamentId; }); data.tournamentPlayers = data.tournamentPlayers.filter(function (p) { return p.id !== tpId; }); var row = teamPlayer(tt && tt.teamId ? tt.teamId : activeTeam().id, tp.globalPlayerId); if (row) row.active = false; state.confirmRemovePlayerId = null; save(); render(); toast('Player removed from this team.'); },
     removeTournamentPlayer: function (tpId) { state.confirmRemovePlayerId = tpId; render(); },
-    addPlayerPrompt: function () { var name = prompt('Player name'); if (!name) return; var role = confirm('Add as Team player? OK = Team, Cancel = Support') ? 'team' : 'support'; var t = activeTournament(); var created = createSupportFromName(t.id, name); var tp = tournamentPlayer(created.tournamentPlayerId); tp.membership = role; refreshPlayerPositions(t.id); save(); render(); },
+    addPlayerPrompt: function () { var name = prompt('Player name'); if (!name) return; var role = confirm('Add as Team player? OK = Team, Cancel = Support') ? 'team' : 'support'; var t = activeTournament(); var created = createSupportFromName(t.id, name); var tp = tournamentPlayer(created.tournamentPlayerId); tp.membership = role; ensureTeamPlayer(t.teamId || activeTeam().id, tp.globalPlayerId, role, tp.skills); refreshPlayerPositions(t.id); save(); render(); },
     editPlayer: function (tpId) { var tp = tournamentPlayer(tpId); var gp = tp && globalPlayer(tp.globalPlayerId); if (!tp || !gp) return; state.editingPlayerId = tpId; state.playerEditDraft = { tpId: tp.id, gpId: gp.id, name: gp.name, avatarId: gp.avatarId, membership: tp.membership, skills: clone(normalizeSkills(tp.skills)) }; render(); },
     updatePlayerDraft: function (field, value) { if (!state.playerEditDraft) return; state.playerEditDraft[field] = value; render(); },
     updatePlayerDraftSkill: function (key, value) { if (!state.playerEditDraft) return; var skills = normalizeSkills(state.playerEditDraft.skills); var nextValue = Number(value); var current = Number(skills[key] || 0); if (nextValue > 3 && current <= 3) { var strongCount = POS_KEYS.filter(function (k) { return k !== key && Number(skills[k] || 0) > 3; }).length; if (strongCount >= 3) { toast('Max 3 strong positions allowed. Lower another 4/5 first.'); render(); return; } } skills[key] = nextValue; state.playerEditDraft.skills = skills; render(); },
-    savePlayerEdit: function () { var draft = state.playerEditDraft; if (!draft) return; var tp = tournamentPlayer(draft.tpId); var gp = globalPlayer(draft.gpId); if (!tp || !gp) return; var clean = clampStrongPositions(draft.skills, tp.tournamentId, tp.id); gp.name = prettyName(draft.name || gp.name); gp.normalizedName = normalizeAlias(gp.name); gp.avatarId = draft.avatarId || gp.avatarId; gp.updatedAt = nowIso(); tp.membership = draft.membership || tp.membership; tp.skills = clean.skills; tp.goalieEligible = (tp.skills.goalie || 0) >= 3; if (tp.tournamentGoalie && !tp.goalieEligible) tp.tournamentGoalie = false; refreshPlayerPositions(tp.tournamentId); tp.updatedAt = nowIso(); state.editingPlayerId = null; state.playerEditDraft = null; save(); render(); toast('Player saved.'); },
+    savePlayerEdit: function () { var draft = state.playerEditDraft; if (!draft) return; var tp = tournamentPlayer(draft.tpId); var gp = globalPlayer(draft.gpId); if (!tp || !gp) return; var clean = clampStrongPositions(draft.skills, tp.tournamentId, tp.id); gp.name = prettyName(draft.name || gp.name); gp.normalizedName = normalizeAlias(gp.name); gp.avatarId = draft.avatarId || gp.avatarId; gp.updatedAt = nowIso(); tp.membership = draft.membership || tp.membership; tp.skills = clean.skills; var tt = data.tournaments.find(function (x) { return x.id === tp.tournamentId; }); var teamRow = ensureTeamPlayer(tt && tt.teamId ? tt.teamId : activeTeam().id, gp.id, tp.membership, clean.skills); if (teamRow) { teamRow.skills = clone(clean.skills); teamRow.membership = tp.membership; } data.tournamentPlayers.forEach(function (other) { var ot = data.tournaments.find(function (x) { return x.id === other.tournamentId; }); if (other.globalPlayerId === gp.id && ot && tt && ot.teamId === tt.teamId) { other.membership = tp.membership; other.skills = clone(clean.skills); } }); tp.goalieEligible = (tp.skills.goalie || 0) >= 3; if (tp.tournamentGoalie && !tp.goalieEligible) tp.tournamentGoalie = false; refreshPlayerPositions(tp.tournamentId); tp.updatedAt = nowIso(); state.editingPlayerId = null; state.playerEditDraft = null; save(); render(); toast('Player saved.'); },
     cancelPlayerEdit: function () { state.editingPlayerId = null; state.playerEditDraft = null; render(); },
     pickAvatar: function (gpId) { state.avatarTarget = gpId; render(); },
     closeAvatarPicker: function () { state.avatarTarget = null; render(); },
@@ -2948,7 +3044,7 @@
     setScore: function (matchId, field, value) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; m[field] = value === '' ? null : Number(value); if (m.scoreFor !== null && m.scoreFor !== undefined && m.scoreAgainst !== null && m.scoreAgainst !== undefined) { m.result = m.scoreFor > m.scoreAgainst ? 'W' : m.scoreFor < m.scoreAgainst ? 'L' : 'D'; m.status = 'completed'; } m.updatedAt = nowIso(); save(); render(); },
     duplicateMatch: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; var copy = clone(m); copy.id = uid('match'); copy.title = (copy.title || 'Match') + ' copy'; copy.date = addDays(copy.date, 0); copy.status = 'draft'; copy.lineup = {}; copy.subs = []; copy.generatedFromTournament = false; data.matches.push(copy); renumberTournamentMatches(copy.tournamentId); save(); render(); },
     deleteMatch: function (matchId) { if (!confirm('Delete this match?')) return; data.matches = data.matches.filter(function (m) { return m.id !== matchId; }); data.matchPlayers = data.matchPlayers.filter(function (p) { return p.matchId !== matchId; }); renumberTournamentMatches(state.activeTournamentId); if (state.activeMatchId === matchId) { var m = matches(state.activeTournamentId)[0]; state.activeMatchId = m && m.id; } save(); render(); },
-    openMatch: function (id) { if (!id) return; state.activeMatchId = id; var m = data.matches.find(function (x) { return x.id === id; }); if (m) state.activeTournamentId = m.tournamentId; state.view = 'plan'; state.activeSlot = null; state.momentByMatch[id] = state.momentByMatch[id] || 'initial'; render(); },
+    openMatch: function (id) { if (!id) return; state.activeMatchId = id; state.lastPlanMatchId = id; var m = data.matches.find(function (x) { return x.id === id; }); if (m) { state.activeTournamentId = m.tournamentId; var t = data.tournaments.find(function (x) { return x.id === m.tournamentId; }); if (t && t.teamId) state.activeTeamId = t.teamId; syncTournamentRosterFromTeam(m.tournamentId); } state.view = 'plan'; state.activeSlot = null; state.momentByMatch[id] = state.momentByMatch[id] || 'initial'; render(); },
     insertSampleRoster: function (matchId) { var sample = 'Tues 23 - 7:10 and 8:05\n1-Jose\n2-Franco\n3-Nishanth\n4-Johan\n5-Fernando\n6-Thomas\n7-Lucas\n8-Roberto 80%\n9-Miguel maybe\n\nOut\n1-Chris\n2-Tobi'; this.updateMatch(matchId, 'rawRosterText', sample); },
     importRoster: importRoster,
     acceptFuzzy: acceptFuzzy,
@@ -2984,7 +3080,7 @@
     openShareImage: function (matchId) { var opened = window.open('', '_blank'); shareCardBlob(function (blob) { if (!blob) { if (opened) opened.close(); return toast('Could not create image.'); } var url = URL.createObjectURL(blob); if (opened) { opened.location.href = url; opened.document.title = 'Match plan image'; toast('Image opened.'); } else toast('Popup blocked. Use Download image instead.'); setTimeout(function () { URL.revokeObjectURL(url); }, 60000); }); },
     copyShareImage: function (matchId) { if (!navigator.clipboard || !window.ClipboardItem) return toast('Clipboard image copy is not supported in this browser.'); shareCardBlob(function (blob) { if (!blob) return toast('Could not create image.'); navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(function () { toast('Image copied to clipboard.'); }).catch(function () { toast('Could not copy image to clipboard.'); }); }); },
     exportData: function () { var backup = { exportFormat: 'captain-match-planner-local-snapshot', appVersion: APP_VERSION, schemaVersion: DB_SCHEMA_VERSION, storageBackend: state.storageBackend, exportedAt: nowIso(), data: clone(data) }; var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }); var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'captain-match-planner-v' + APP_VERSION.replace(/\./g, '_') + '-backup.json'; a.click(); URL.revokeObjectURL(a.href); },
-    importDataPrompt: function () { var input = document.createElement('input'); input.type = 'file'; input.accept = '.json,application/json'; input.onchange = function () { var file = input.files[0]; if (!file) return; var reader = new FileReader(); reader.onload = function () { try { var parsed = JSON.parse(reader.result); var incoming = parsed && parsed.data && parsed.exportFormat ? parsed.data : parsed; data = migrateData(incoming); data.tournaments.forEach(function (t) { reconcileTournamentSchedule(t.id); }); state.activeTournamentId = preferredTournamentId() || (data.tournaments[0] && data.tournaments[0].id); var importedNext = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null; state.activeMatchId = importedNext ? importedNext.id : (data.matches[0] && data.matches[0].id); save().then(function () { render(); toast('Data imported into local database.'); }); } catch (e) { alert('Invalid JSON backup.'); } }; reader.readAsText(file); }; input.click(); }
+    importDataPrompt: function () { var input = document.createElement('input'); input.type = 'file'; input.accept = '.json,application/json'; input.onchange = function () { var file = input.files[0]; if (!file) return; var reader = new FileReader(); reader.onload = function () { try { var parsed = JSON.parse(reader.result); var incoming = parsed && parsed.data && parsed.exportFormat ? parsed.data : parsed; data = migrateData(incoming); state.activeTeamId = preferredTeamId(); data.tournaments.forEach(function (t) { reconcileTournamentSchedule(t.id); }); state.activeTournamentId = preferredTournamentId() || (teamTournaments(state.activeTeamId)[0] && teamTournaments(state.activeTeamId)[0].id) || (data.tournaments[0] && data.tournaments[0].id); var importedNext = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null; state.activeMatchId = importedNext ? importedNext.id : (data.matches[0] && data.matches[0].id); save().then(function () { render(); toast('Data imported into local database.'); }); } catch (e) { alert('Invalid JSON backup.'); } }; reader.readAsText(file); }; input.click(); }
   };
   function fallbackCopy(text, message) { var ta = document.createElement('textarea'); ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.left = '-9999px'; ta.style.top = '0'; document.body.appendChild(ta); ta.focus(); ta.select(); var ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; } document.body.removeChild(ta); toast(ok ? (message || 'Copied.') : 'Copy failed. Select the text and copy manually.'); }
   initializeApp();

@@ -1,5 +1,5 @@
 /* Captain Match Planner PWA service worker */
-const CACHE_NAME = 'captain-match-planner-v4-05-rotation-cache';
+const CACHE_NAME = 'captain-match-planner-v5-0-multiteam-cache';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -32,7 +32,18 @@ const CORE_ASSETS = [
   './assets/avatars/avatar-16.png',
   './assets/avatars/avatar-17.png',
   './assets/avatars/avatar-18.png',
-  './assets/avatars/avatar-19.png'
+  './assets/avatars/avatar-19.png',
+  './assets/avatars/avatar-20.png',
+  './assets/avatars/avatar-21.png',
+  './assets/avatars/avatar-22.png',
+  './assets/avatars/avatar-23.png',
+  './assets/avatars/avatar-24.png',
+  './assets/avatars/avatar-25.png',
+  './assets/avatars/avatar-26.png',
+  './assets/avatars/avatar-27.png',
+  './assets/avatars/avatar-28.png',
+  './assets/avatars/avatar-29.png',
+  './assets/avatars/avatar-30.png'
 ];
 
 self.addEventListener('install', (event) => {

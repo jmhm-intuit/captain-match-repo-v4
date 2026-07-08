@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Data Base Check · Captain Match Planner v4.05</title>
+  <title>Data Base Check · Captain Match Planner v5.0</title>
   <meta name="theme-color" content="#1769ff">
   <meta name="description" content="Read-only local database inspection page for Captain Match Planner.">
   <link rel="manifest" href="./manifest.webmanifest">
@@ -76,8 +76,8 @@
   <script>
     (function () {
       var DB_NAME = "captain_match_planner_local_db";
-      var DB_VERSION = 3;
-      var preferredOrder = ["meta", "globalPlayers", "tournaments", "tournamentPlayers", "matches", "matchPlayers", "customAvatars", "playerAliases", "matchLineups", "lineupAssignments", "substitutionWindows", "substitutionChanges"];
+      var DB_VERSION = 4;
+      var preferredOrder = ["meta", "teams", "teamPlayers", "globalPlayers", "tournaments", "tournamentPlayers", "matches", "matchPlayers", "customAvatars", "playerAliases", "matchLineups", "lineupAssignments", "substitutionWindows", "substitutionChanges"];
       var db = null;
       var cache = {};
       var activeStore = null;

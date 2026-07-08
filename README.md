@@ -1,44 +1,60 @@
-# Captain Match Planner v4.05
+# Captain Match Planner v5.0
 
 Installable local-first PWA for 7v7 soccer match planning.
 
-## What changed in v4.05
+## What changed in v5.0
 
-v4.05 starts from the v4.04 planning baseline and focuses on two follow-up fixes from the Plan Highlights and Share Match views.
+v5.0 introduces the multi-team foundation while preserving the v4.05 planning logic and local-first deployment model.
 
-- Share Match rotation rows are easier to scan: each substitution change stays on one compact row with **IN player / position / OUT player** instead of making the position pill a full row.
-- Playing Time Balance now uses a realistic **target floor** instead of placing the marker at the full average.
-- The outfield target floor is calculated as **planned outfield average minus 10 minutes**.
-- If the final phase is live/not planned, the target floor uses only the planned portion of the match, not the full 50 minutes.
-- Warnings now compare each outfield player's **planned minutes** against the target floor.
-- Goalkeeper handling remains unchanged: fixed GK target is 50 minutes; split-half keepers target 25 minutes each.
-- Bumped app version and service-worker cache to `captain-match-planner-v4-05-cache`.
+### Multi-team foundation
 
+- Added a persistent team switcher in the top bar.
+- V5 supports up to 5 active teams in the UI.
+- Default teams created during migration:
+  - Green FC with Forest Green branding.
+  - Intuit United with Blue branding.
+- Existing v4.05 data migrates into Green FC.
+- Existing support players are also added to Intuit United as support players.
+- Tournaments and matches are filtered by the selected team.
+- Each team has editable name and color.
 
-## Rotation patch included in v4.05
+### Shared player pool
 
-This package also includes the latest Balanced/Fair rotation correction:
+- Players are now treated as a global player pool.
+- A player can belong to multiple teams with different team roles.
+- Team membership is shown as neutral pills, for example:
+  - Green FC · Roster
+  - Intuit United · Support
+- Player profile drawer shows avatar, skills, and all team memberships.
+- Team section includes a shared player pool and an add-existing-player flow.
+- Removing a player from a team no longer deletes the global player profile.
 
-- Defense is protected but no longer frozen when there are 2+ bench players.
-- In Balanced/Fair modes, the engine can rest one defender at a time when a DEF 4+ cover player is available.
-- The engine strongly avoids taking the same player out twice in the same match when other eligible outfield players have not rested.
-- The one-defender-at-a-time rule remains: auto-suggest still avoids rotating both defenders in the same window.
-- The service-worker cache is bumped to `captain-match-planner-v4-05-rotation-cache` so this patch refreshes cleanly in the installed PWA.
+### Match-planning navigation
 
-## Previous v4.04 foundation
+- Returning to Matches during the same session reopens the last match-planning view.
+- The match-planning page still has a Back to matches button to return to the match overview.
+- Confirm Players rows now let you open a player profile from the match-planning flow.
 
-v4.04 introduced the compact navigation, Tournament Full overflow fixes, Plan Settings command panel, heavy-rotation logic, simultaneous substitution-window validation, keeper-plan options, and the visual Plan Highlights dashboard.
+### Avatar library
+
+- Replaced the default avatar picker with the updated 30-avatar library.
+- All built-in avatars are labeled neutrally as Avatar 01 through Avatar 30.
+- Uploaded custom avatars remain local and are included in backups.
+
+## Data migration
+
+When opening v5.0 over an existing v4.05 local database, the app creates team records and team membership records automatically.
+
+Recommended before deployment: export a backup from the live v4.05 app.
 
 ## Deployment strategy
 
-v4.05 is intended as an update over v4.04 using the same GitHub Pages URL and the same IndexedDB database name. Existing local data should remain available after deployment.
-
-Before deploying, export a backup from the live app.
+v5.0 is intended as an update over v4.05 using the same GitHub Pages URL and the same local IndexedDB database name. Existing local data should remain available after migration.
 
 ## Local test
 
 ```bash
-cd captain-match-planner-v4_05-local
+cd captain-match-planner-v5_0-local
 python3 -m http.server 5174
 ```
 
@@ -57,23 +73,23 @@ cd ~/Documents/GitHub/captain-match-repo-v4
 
 git checkout main
 git pull
-git checkout -b update-v4-05
+git checkout -b update-v5-0
 
-# Copy the contents of captain-match-planner-v4_05-local into this repo folder.
+# Copy the contents of captain-match-planner-v5_0-local into this repo folder.
 # Keep the .git folder.
 
 git status
 git add .
-git commit -m "Update Captain Match Planner to v4.05"
-git push origin update-v4-05
+git commit -m "Update Captain Match Planner to v5.0"
+git push origin update-v5-0
 ```
 
 Then merge to main:
 
 ```bash
 git checkout main
-git merge update-v4-05
+git merge update-v5-0
 git push origin main
 ```
 
-After GitHub Pages deploys, open the live URL and confirm Home shows **App v4.05**. If the installed PWA still shows an older version, close/reopen the app or refresh once so the new service worker cache takes over.
+After GitHub Pages deploys, open the live URL and confirm Home shows **App v5.0**. If the installed PWA still shows an older version, close/reopen the app or refresh once so the new service worker cache takes over.

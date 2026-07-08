@@ -1534,3 +1534,31 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
     gap: 6px;
   }
 }
+
+/* v5 multi-team controls */
+.team-switcher { display:flex; flex-direction:column; gap:4px; min-width:170px; }
+.team-switcher label { font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:950; }
+.team-switcher select { min-width:170px; border:1px solid var(--line); border-radius:14px; padding:8px 10px; font-weight:950; color:var(--ink); background:#fff; }
+.team-pill-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:4px; }
+.team-pill-row.compact { gap:4px; }
+.team-pill { display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:999px; padding:4px 8px; background:#fff; color:#41516f; font-size:11px; font-weight:950; line-height:1; }
+.team-pill.muted { color:var(--muted); }
+.link-title { border:0; background:transparent; padding:0; color:var(--ink); font:inherit; font-weight:950; text-align:left; cursor:pointer; }
+.link-title:hover { color:var(--blue); text-decoration:underline; }
+.player-pool-list { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:10px; }
+.pool-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:10px; align-items:center; border:1px solid var(--line); border-radius:18px; padding:10px; background:rgba(255,255,255,.86); }
+.player-profile-panel { max-width:520px; }
+.profile-hero { display:grid; grid-template-columns:auto minmax(0,1fr); gap:14px; align-items:center; margin:16px 0; }
+.avatar.xl { width:96px; height:96px; border-radius:50%; border:3px solid #fff; box-shadow:0 12px 28px rgba(16,33,63,.12); overflow:hidden; padding:0; background:#fff; }
+.avatar.xl img { width:100%; height:100%; object-fit:cover; display:block; }
+.subtle-card { background:rgba(248,251,255,.94); border:1px solid var(--line); border-radius:20px; padding:14px; margin-bottom:12px; }
+.membership-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid rgba(216,227,242,.8); }
+.membership-row:last-child { border-bottom:0; }
+.membership-row select { min-width:120px; border:1px solid var(--line); border-radius:12px; padding:7px 9px; font-weight:900; }
+.team-dot { width:12px; height:12px; border-radius:50%; display:inline-block; }
+.profile-skills { margin-top:10px; }
+@media (max-width: 760px) {
+  .top-actions { align-items:stretch; }
+  .team-switcher, .team-switcher select { min-width:0; width:100%; }
+  .player-pool-list { grid-template-columns:1fr; }
+}
