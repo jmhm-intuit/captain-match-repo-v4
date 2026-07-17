@@ -1574,7 +1574,6 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
     linear-gradient(180deg, rgba(255,255,255,.88), rgba(247,251,255,.94)),
     radial-gradient(circle at 12% 8%, var(--team-soft, rgba(23,105,255,.14)), transparent 28rem),
     radial-gradient(circle at 92% 6%, var(--team-soft, rgba(23,105,255,.14)), transparent 24rem),
-    var(--team-bg-image, none) center / cover no-repeat,
     linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
 }
 .logo, .nav button.active { background: linear-gradient(135deg, var(--blue), var(--blue2)); }
@@ -1622,4 +1621,110 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 @media (max-width: 900px) {
   .team-branding-grid { grid-template-columns:1fr; }
   .segmented-cards, .segmented-cards.stamina { grid-template-columns:1fr; }
+}
+
+
+/* v5.2 release refinements: hero image placement, mobile team switcher, color picker, delete team */
+.home-hero {
+  background:
+    linear-gradient(90deg, rgba(7,28,76,.84), rgba(7,64,121,.54)),
+    var(--team-bg-image, url('../assets/soccer-background.png')) center 58% / cover no-repeat !important;
+}
+.color-picker-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 18px;
+  padding: 10px;
+}
+.color-picker-card .color-control {
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.color-swatches {
+  margin-top: 0 !important;
+  padding-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.color-swatches button {
+  width: 34px !important;
+  height: 34px !important;
+  position: relative;
+}
+.color-swatches button.selected {
+  box-shadow: 0 0 0 3px rgba(23,105,255,.25), 0 0 0 6px #fff, 0 10px 22px rgba(16,33,63,.16) !important;
+}
+.color-swatches button.selected::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 1000;
+  text-shadow: 0 1px 4px rgba(0,0,0,.45);
+}
+.secondary-danger {
+  border: 1px solid #fecaca !important;
+  background: #fff1f2 !important;
+  color: #b91c1c !important;
+  box-shadow: none !important;
+}
+.subtext.tight { margin-top: 6px; font-size: 11px; }
+@media (max-width: 560px) {
+  .topbar { flex-direction: column; align-items: stretch !important; }
+  .brand { width: 100%; }
+  .top-actions {
+    display: flex !important;
+    width: 100%;
+    justify-content: stretch;
+    gap: 8px;
+  }
+  .top-actions .team-switcher { display:flex; width:100%; }
+  .top-actions .team-switcher select { width:100%; min-width:0; }
+  .top-actions > .btn { display:none; }
+  .team-branding-grid { gap: 14px; }
+  .color-picker-card { width:100%; }
+}
+
+/* v6.01 baseline roster + CSV import refinements */
+.avatar-button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+.avatar[style*="--avatar-ring"] {
+  box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--avatar-ring), 0 10px 22px rgba(16,33,63,.18) !important;
+}
+.hidden-file-input { display:none; }
+.roster-import-modal { max-width: 980px; max-height: 88vh; overflow:auto; }
+.csv-review-list { display:grid; gap:10px; margin:14px 0; }
+.csv-review-row {
+  display:grid;
+  grid-template-columns:minmax(220px, .9fr) minmax(260px, 1.1fr);
+  gap:12px;
+  align-items:start;
+  border:1px solid var(--line);
+  border-radius:18px;
+  background:#fff;
+  padding:12px;
+}
+.csv-review-row.warn { border-color:#f59e0b; background:#fff8ec; }
+.csv-review-row ul { margin:8px 0 0; padding-left:18px; color:#52637c; font-weight:750; }
+.csv-match-target { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.csv-skills { margin-top:8px; }
+.compact-row { gap:8px; align-items:center; }
+@media (max-width: 740px) {
+  .csv-review-row { grid-template-columns:1fr; }
 }

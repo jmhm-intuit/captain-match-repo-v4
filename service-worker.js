@@ -1,5 +1,5 @@
 /* Captain Match Planner PWA service worker */
-const CACHE_NAME = 'captain-match-planner-v5-1-team-identity-cache';
+const CACHE_NAME = 'captain-match-planner-v6-01-baseline-cache';
 const CORE_ASSETS = [
   './',
   './index.html',

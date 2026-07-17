@@ -2,8 +2,8 @@
   var STORAGE_KEY = "squadflow_captain_v2_local";
   var DB_NAME = "captain_match_planner_local_db";
   var DB_VERSION = 4;
-  var DB_SCHEMA_VERSION = 8;
-  var APP_VERSION = "5.1";
+  var DB_SCHEMA_VERSION = 9;
+  var APP_VERSION = "6.01";
   var POS_KEYS = ["forward", "wing", "center", "defense", "goalie"];
   var POS_SHORT = { forward: "FWD", wing: "WNG", center: "CTR", defense: "DEF", goalie: "GK" };
   var POS_FULL = { forward: "Forward", wing: "Wing", center: "Center", defense: "Defense", goalie: "Goalie" };
@@ -105,7 +105,8 @@
     tournamentSetupEditing: false,
     dataTable: "tournaments",
     profilePlayerId: null,
-    lastPlanMatchId: null
+    lastPlanMatchId: null,
+    bulkRosterPreview: null
   };
 
   var data = emptyData();
@@ -431,6 +432,188 @@
   function soccerExperienceMeta(value) { value = value || 'lifelong'; var map = { lt5: { label:'Learning years', detail:'Less than 5 years', icon:'🌱' }, fiveTen: { label:'Experienced', detail:'5 to 10 years', icon:'⚽' }, lifelong: { label:'Lifelong player', detail:'All my life', icon:'🏆' } }; return map[value] || map.lifelong; }
   function runningCapacityMeta(value) { value = value || '45'; var map = { low: { label:'Low engine', detail:'Not much', icon:'🪫', level:1 }, m15: { label:'15 min engine', detail:'15 min non-stop', icon:'🔋', level:2 }, m30: { label:'30 min engine', detail:'30 min', icon:'🔋🔋', level:3 }, m45: { label:'45 min engine', detail:'45 min', icon:'🔋🔋🔋', level:4 }, plus45: { label:'45+ engine', detail:'More than 45 min', icon:'⚡', level:5 } }; return map[value] || map.m45; }
   function ensureGlobalPlayerTraits(gp) { if (!gp) return; gp.soccerExperience = gp.soccerExperience || 'lifelong'; gp.runningCapacity = gp.runningCapacity || 'm45'; }
+
+  function normalizeEmail(value) { return String(value || '').trim().toLowerCase(); }
+  function emailsForPlayer(gp) {
+    var out = [];
+    if (!gp) return out;
+    if (gp.email) out.push(normalizeEmail(gp.email));
+    (gp.emails || []).forEach(function (e) { e = normalizeEmail(e); if (e && out.indexOf(e) < 0) out.push(e); });
+    return out;
+  }
+  function addEmailToPlayer(gp, email) {
+    email = normalizeEmail(email);
+    if (!gp || !email) return;
+    gp.emails = Array.isArray(gp.emails) ? gp.emails : [];
+    if (!gp.email) gp.email = email;
+    if (gp.emails.indexOf(email) < 0) gp.emails.push(email);
+  }
+  function titleCaseMinor(name) {
+    return String(name || '').trim().replace(/\s+/g, ' ').replace(/\b([a-z])/g, function (m) { return m.toUpperCase(); });
+  }
+  function avatarNumberToId(value) {
+    var text = String(value || '').toLowerCase();
+    var m = text.match(/(?:avatar\s*)?(\d{1,2})/);
+    if (!m) return 'avatar-07';
+    var n = Math.max(1, Math.min(30, Number(m[1])));
+    return 'avatar-' + String(n).padStart(2, '0');
+  }
+  function soccerExperienceFromSurvey(value) {
+    value = String(value || '').toLowerCase();
+    if (value.indexOf('less') >= 0 || value.indexOf('lt5') >= 0) return 'lt5';
+    if (value.indexOf('5 to 10') >= 0 || value.indexOf('between') >= 0) return 'fiveTen';
+    return 'lifelong';
+  }
+  function runningCapacityFromSurvey(value) {
+    value = String(value || '').toLowerCase();
+    if (value.indexOf('more') >= 0 || value.indexOf('45+') >= 0) return 'plus45';
+    if (value.indexOf('45') >= 0) return 'm45';
+    if (value.indexOf('30') >= 0) return 'm30';
+    if (value.indexOf('15') >= 0) return 'm15';
+    return 'low';
+  }
+  function scoreFromSurvey(value) {
+    value = String(value || '').toLowerCase();
+    if (value.indexOf('great') >= 0) return 5;
+    if (value.indexOf('good') >= 0) return 4;
+    if (value.indexOf('needed') >= 0 || value.indexOf('can play') >= 0) return 2;
+    if (value.indexOf('not good') >= 0 || value.indexOf('not') >= 0) return 1;
+    var n = Number(value);
+    return isNaN(n) ? 3 : Math.max(1, Math.min(5, n));
+  }
+  function teamPositionDepthForData(d, teamId) {
+    var counts = { forward: 0, wing: 0, center: 0, defense: 0, goalie: 0 };
+    (d.teamPlayers || []).forEach(function (tp) {
+      if (tp.teamId !== teamId || tp.active === false) return;
+      var s = normalizeSkills(tp.skills || ((d.globalPlayers || []).find(function (gp) { return gp.id === tp.globalPlayerId; }) || {}).defaultSkills || defaultSkills());
+      POS_KEYS.forEach(function (k) { if ((s[k] || 0) >= 4) counts[k] += 1; });
+    });
+    return counts;
+  }
+  function clampSurveySkillsForData(d, teamId, skills) {
+    var s = normalizeSkills(skills);
+    var strong = POS_KEYS.filter(function (k) { return (s[k] || 0) >= 4; });
+    if (strong.length <= 3) return s;
+    var depth = teamPositionDepthForData(d, teamId);
+    strong.sort(function (a, b) {
+      var scoreDiff = (s[b] || 0) - (s[a] || 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      var scarcityDiff = (depth[a] || 0) - (depth[b] || 0);
+      if (scarcityDiff !== 0) return scarcityDiff;
+      return POS_KEYS.indexOf(a) - POS_KEYS.indexOf(b);
+    });
+    strong.slice(3).forEach(function (k) { s[k] = 3; });
+    return s;
+  }
+  function intuitUnitedRosterSeed() {
+    return [
+      { name:'Ansh Tomar', email:'ansh_tomar@intuit.com', emails:['ansh_tomar@intuit.com','ansh06tomar@gmail.com'], avatar:'25', exp:'Since I was a kid', run:'45 min non stop', skills:{ forward:5, wing:5, center:5, defense:2, goalie:1 } },
+      { name:'Puneeth Vijayendra', email:'puneeth.vijayendra@creditkarma.com', emails:['puneeth.vijayendra@creditkarma.com','puneethv29@gmail.com'], avatar:'16', exp:'between 5 to 10 years', run:'More than 45 min', skills:{ forward:2, wing:2, center:4, defense:2, goalie:2 } },
+      { name:'Ebrahim Sofi', email:'ebrahim_sofi@intuit.com', emails:['ebrahim_sofi@intuit.com'], avatar:'09', exp:'Since I was a kid', run:'45 min non stop', skills:{ forward:5, wing:5, center:4, defense:1, goalie:1 } },
+      { name:'Migu Malla', email:'migumalla1009@gmail.com', emails:['migumalla1009@gmail.com'], avatar:'29', exp:'between 5 to 10 years', run:'45 min non stop', skills:{ forward:2, wing:1, center:4, defense:5, goalie:1 } },
+      { name:'Animesh Rajpurohit', email:'animesh_rajpurohit@intuit.com', emails:['animesh_rajpurohit@intuit.com'], avatar:'09', exp:'less than 5 years', run:'30 min non stop', skills:{ forward:4, wing:4, center:2, defense:2, goalie:1 } },
+      { name:'Jeff Saenz', email:'jeffrey_saenz@intuit.com', emails:['jeffrey_saenz@intuit.com'], avatar:'08', exp:'Since I was a kid', run:'15 min non stop', skills:{ forward:4, wing:4, center:4, defense:4, goalie:1 } },
+      { name:'Nisanth Dheram', email:'sainisanth_dheram@intuit.com', emails:['sainisanth_dheram@intuit.com','nisanth92@gmail.com'], avatar:'21', exp:'Since I was a kid', run:'15 min non stop', skills:{ forward:4, wing:5, center:2, defense:4, goalie:1 }, aliases:['Nishanth','Nishant','Nisanth'] },
+      { name:'Fernando Mendoza', email:'fernando_mendoza@intuit.com', emails:['fernando_mendoza@intuit.com'], avatar:'24', exp:'Since I was a kid', run:'30 min non stop', skills:{ forward:2, wing:5, center:4, defense:4, goalie:1 }, aliases:['Fernando','Fer'] },
+      { name:'Ali Najeed', email:'ali_najeed@intuit.com', emails:['ali_najeed@intuit.com','a.najeed@gmail.com'], avatar:'21', exp:'Since I was a kid', run:'More than 45 min', skills:{ forward:4, wing:4, center:5, defense:4, goalie:1 } },
+      { name:'Grant Campanelli', email:'grant_campanelli@intuit.com', emails:['grant_campanelli@intuit.com','grantcampanelli@gmail.com'], avatar:'28', exp:'Since I was a kid', run:'15 min non stop', skills:{ forward:5, wing:5, center:4, defense:5, goalie:2 } },
+      { name:'Franco Duarte', email:'franco_duarte@intuit.com', emails:['franco_duarte@intuit.com'], avatar:'26', exp:'Since I was a kid', run:'15 min non stop', skills:{ forward:1, wing:2, center:2, defense:5, goalie:5 }, aliases:['Franco'] },
+      { name:'Suyash Sharma', email:'suyash_sharma@intuit.com', emails:['suyash_sharma@intuit.com'], avatar:'07', exp:'Since I was a kid', run:'More than 45 min', skills:{ forward:4, wing:4, center:4, defense:4, goalie:2 } },
+      { name:'Lucky', email:'lakhan_rochwani@intuit.com', emails:['lakhan_rochwani@intuit.com'], avatar:'16', exp:'less than 5 years', run:'30 min non stop', skills:{ forward:2, wing:4, center:2, defense:4, goalie:2 }, aliases:['Lakhan Rochwani'] },
+      { name:'Aryon Jafari', email:'aryon_jafari@intuit.com', emails:['aryon_jafari@intuit.com','aryonjafari@gmail.com'], avatar:'10', exp:'Since I was a kid', run:'More than 45 min', skills:{ forward:5, wing:5, center:5, defense:5, goalie:1 } },
+      { name:'Tade', email:'tade_nada@intuit.com', emails:['tade_nada@intuit.com','nadatade@gmail.com'], avatar:'07', exp:'Since I was a kid', run:'15 min non stop', skills:{ forward:2, wing:2, center:4, defense:2, goalie:1 }, aliases:['Tade Nada'] },
+      { name:'Samuel', email:'samuel_velazquez@intuit.com', emails:['samuel_velazquez@intuit.com'], avatar:'07', exp:'Since I was a kid', run:'More than 45 min', skills:{ forward:5, wing:5, center:4, defense:4, goalie:2 }, aliases:['samuel','Samuel Velazquez'] },
+      { name:'Jose', email:'josemaria_herranmarco@intuit.com', emails:['josemaria_herranmarco@intuit.com'], avatar:'25', exp:'Since I was a kid', run:'More than 45 min', skills:{ forward:5, wing:2, center:4, defense:4, goalie:2 }, aliases:['Chema','Jose Maria'] }
+    ];
+  }
+  function globalPlayerEmailsMatch(gp, emails) {
+    var existing = emailsForPlayer(gp);
+    return (emails || []).some(function (e) { return existing.indexOf(normalizeEmail(e)) >= 0; });
+  }
+  function findGlobalPlayerForRosterRow(d, row) {
+    var emails = (row.emails || [row.email]).map(normalizeEmail).filter(Boolean);
+    var byEmail = (d.globalPlayers || []).find(function (gp) { return globalPlayerEmailsMatch(gp, emails); });
+    if (byEmail) return byEmail;
+    var namesToTry = [row.name].concat(row.aliases || []).map(normalizeAlias).filter(Boolean);
+    var exact = (d.globalPlayers || []).find(function (gp) {
+      var aliases = [gp.name].concat(gp.aliases || []).map(normalizeAlias);
+      return namesToTry.some(function (n) { return aliases.indexOf(n) >= 0; });
+    });
+    if (exact) return exact;
+    if (/^franco\b/i.test(row.name || '')) return (d.globalPlayers || []).find(function (gp) { return normalizeAlias(gp.name) === 'franco'; });
+    if (/^fernando\b/i.test(row.name || '')) return (d.globalPlayers || []).find(function (gp) { return normalizeAlias(gp.name) === 'fernando'; });
+    if (/^nisanth\b/i.test(row.name || '')) return (d.globalPlayers || []).find(function (gp) { return [gp.name].concat(gp.aliases || []).map(normalizeAlias).some(function (n) { return n === 'nishanth' || n === 'nisanth' || n === 'nishant'; }); });
+    return null;
+  }
+  function ensureTeamPlayerForData(d, teamId, gpId, membership, skills) {
+    var existing = (d.teamPlayers || []).find(function (tp) { return tp.teamId === teamId && tp.globalPlayerId === gpId; });
+    if (existing) { existing.active = true; existing.membership = membership || existing.membership || 'support'; existing.skills = normalizeSkills(skills || existing.skills || defaultSkills()); existing.updatedAt = nowIso(); return existing; }
+    var row = { id: uid('team_player'), teamId: teamId, globalPlayerId: gpId, membership: membership || 'support', skills: normalizeSkills(skills || defaultSkills()), active: true, createdAt: nowIso(), updatedAt: nowIso() };
+    d.teamPlayers.push(row);
+    return row;
+  }
+  function ensureTournamentPlayerForData(d, tournamentId, teamPlayerRow) {
+    var t = (d.tournaments || []).find(function (x) { return x.id === tournamentId; });
+    if (!t || !teamPlayerRow) return null;
+    var gp = (d.globalPlayers || []).find(function (p) { return p.id === teamPlayerRow.globalPlayerId; });
+    var existing = (d.tournamentPlayers || []).find(function (tp) { return tp.tournamentId === tournamentId && tp.globalPlayerId === teamPlayerRow.globalPlayerId; });
+    var skills = normalizeSkills(teamPlayerRow.skills || (gp && gp.defaultSkills) || defaultSkills());
+    var pos = derivePositions(skills, tournamentId, existing && existing.id);
+    if (existing) { existing.active = true; existing.teamId = t.teamId; existing.membership = teamPlayerRow.membership || existing.membership || 'support'; existing.skills = skills; existing.primaryPosition = pos.primary; existing.secondaryPosition = pos.secondary; existing.goalieEligible = skills.goalie >= 3; existing.tournamentGoalie = existing.tournamentGoalie || (gp && /franco/i.test(gp.name) && skills.goalie >= 3); existing.updatedAt = nowIso(); return existing; }
+    var tp = { id: uid('tp'), teamId: t.teamId, tournamentId: tournamentId, globalPlayerId: teamPlayerRow.globalPlayerId, membership: teamPlayerRow.membership || 'support', skills: skills, primaryPosition: pos.primary, secondaryPosition: pos.secondary, goalieEligible: skills.goalie >= 3, tournamentGoalie: gp && /franco/i.test(gp.name) && skills.goalie >= 3, active: true, createdAt: nowIso(), updatedAt: nowIso() };
+    d.tournamentPlayers.push(tp);
+    return tp;
+  }
+  function upsertGlobalPlayerFromRosterData(d, row, teamId) {
+    var gp = findGlobalPlayerForRosterRow(d, row);
+    var skills = clampSurveySkillsForData(d, teamId, row.skills || defaultSkills());
+    if (!gp) {
+      gp = { id: uid('gp'), name: titleCaseMinor(row.name), normalizedName: normalizeAlias(row.name), aliases: (row.aliases || []).slice(), avatarId: avatarNumberToId(row.avatar), defaultSkills: skills, soccerExperience: soccerExperienceFromSurvey(row.exp), runningCapacity: runningCapacityFromSurvey(row.run), email: normalizeEmail(row.email), emails: [], createdAt: nowIso(), updatedAt: nowIso() };
+      (row.emails || [row.email]).forEach(function (e) { addEmailToPlayer(gp, e); });
+      d.globalPlayers.push(gp);
+    } else {
+      gp.name = titleCaseMinor(row.name || gp.name);
+      gp.normalizedName = normalizeAlias(gp.name);
+      gp.aliases = Array.isArray(gp.aliases) ? gp.aliases : [];
+      (row.aliases || []).forEach(function (a) { if (a && gp.aliases.indexOf(a) < 0 && normalizeAlias(a) !== gp.normalizedName) gp.aliases.push(a); });
+      gp.avatarId = avatarNumberToId(row.avatar || gp.avatarId);
+      gp.defaultSkills = skills;
+      gp.soccerExperience = soccerExperienceFromSurvey(row.exp);
+      gp.runningCapacity = runningCapacityFromSurvey(row.run);
+      (row.emails || [row.email]).forEach(function (e) { addEmailToPlayer(gp, e); });
+      gp.updatedAt = nowIso();
+    }
+    return { gp: gp, skills: skills };
+  }
+  function ensureIntuitUnitedBaseline(d) {
+    d.teams = Array.isArray(d.teams) ? d.teams : [];
+    d.teamPlayers = Array.isArray(d.teamPlayers) ? d.teamPlayers : [];
+    d.globalPlayers = Array.isArray(d.globalPlayers) ? d.globalPlayers : [];
+    d.tournaments = Array.isArray(d.tournaments) ? d.tournaments : [];
+    d.tournamentPlayers = Array.isArray(d.tournamentPlayers) ? d.tournamentPlayers : [];
+    d.matches = Array.isArray(d.matches) ? d.matches : [];
+    var intuit = d.teams.find(function (tm) { return tm.id === 'team_intuit_united' || /intuit\s+united/i.test(tm.name || '') || /intuit\s+fc/i.test(tm.name || ''); });
+    if (!intuit) { intuit = { id:'team_intuit_united', name:'Intuit United FC', color:'#1769ff', colorName:'Blue', backgroundSrc:'assets/team-backgrounds/intuit-united-blue.png', active:true, createdAt:nowIso(), updatedAt:nowIso() }; d.teams.push(intuit); }
+    intuit.id = intuit.id || 'team_intuit_united'; intuit.name = 'Intuit United FC'; intuit.color = intuit.color || '#1769ff'; intuit.colorName = intuit.colorName || 'Blue'; intuit.backgroundSrc = intuit.backgroundSrc || 'assets/team-backgrounds/intuit-united-blue.png'; intuit.active = intuit.active !== false;
+    var tour = d.tournaments.find(function (t) { return t.id === 't_intuit_united_s1' || t.teamId === intuit.id; });
+    if (!tour) { tour = { id:'t_intuit_united_s1', teamId:intuit.id, name:'Season 1', teamName:'Intuit United FC', defaultDay:'Wednesday', location:'', startDate:'2026-07-22', weekCount:8, matchTarget:8, skipDates:[], createdAt:nowIso(), updatedAt:nowIso(), archived:false }; d.tournaments.push(tour); }
+    tour.teamId = intuit.id; tour.teamName = 'Intuit United FC'; tour.defaultDay = 'Wednesday'; if (!tour._startDateUserAdjusted) tour.startDate = '2026-07-22'; tour.matchTarget = 8; tour.weekCount = Math.max(tour.weekCount || 8, 8); tour.skipDates = Array.isArray(tour.skipDates) ? tour.skipDates : [];
+    var activeTeamIds = d.teams.filter(function (tm) { return tm.active !== false; }).slice(0,5).map(function (tm) { return tm.id; });
+    intuitUnitedRosterSeed().forEach(function (row) {
+      var result = upsertGlobalPlayerFromRosterData(d, row, intuit.id);
+      var gp = result.gp;
+      var skills = result.skills;
+      var rosterRow = ensureTeamPlayerForData(d, intuit.id, gp.id, 'team', skills);
+      activeTeamIds.forEach(function (teamId) { if (teamId !== intuit.id && !d.teamPlayers.some(function (tp) { return tp.teamId === teamId && tp.globalPlayerId === gp.id && tp.active !== false; })) ensureTeamPlayerForData(d, teamId, gp.id, 'support', skills); });
+      ensureTournamentPlayerForData(d, tour.id, rosterRow);
+    });
+    d.tournaments.filter(function (t) { return t.teamId === intuit.id; }).forEach(function (t) { t.teamName = 'Intuit United FC'; });
+    var dates = ['2026-07-22','2026-07-29','2026-08-05','2026-08-12','2026-08-19','2026-08-26','2026-09-03','2026-09-10'];
+    dates.forEach(function (date, index) {
+      var existing = d.matches.find(function (m) { return m.tournamentId === tour.id && m.date === date; });
+      if (!existing) d.matches.push({ id: uid('match'), tournamentId: tour.id, title:'Match ' + (index + 1), date: date, time:'', opponent:'', location: tour.location || '', formation:'2-3-1', suggestMode:'positional', rotationStyle:'balanced', keeperPlan:'fixed', subTiming:'heavy', finalPhase:'live', status:'draft', scoreFor:null, scoreAgainst:null, result:'', rawRosterText:'', matchImportSummary:null, lineup:{}, subWindows: clone(TEMPLATES.heavy), subs:[], strategyNote: defaultStrategyNote(), showMinutes:false, createdAt:nowIso(), updatedAt:nowIso(), generatedFromTournament:true });
+    });
+  }
   function ensurePlayerSupportEverywhere(gpId, skills) { activeTeams().forEach(function (tm) { ensureTeamPlayer(tm.id, gpId, 'support', skills || (globalPlayer(gpId) && globalPlayer(gpId).defaultSkills) || defaultSkills()); }); }
   function membershipForTeam(globalPlayerId, teamId) { return teamPlayer(teamId, globalPlayerId); }
   function setGlobalMembership(globalPlayerId, teamId, membership) { var gp = globalPlayer(globalPlayerId); if (!gp || !teamId) return null; if (membership === 'none') { var row = data.teamPlayers.find(function (tp) { return tp.teamId === teamId && tp.globalPlayerId === globalPlayerId; }); if (row) { row.active = false; row.updatedAt = nowIso(); } data.tournaments.filter(function (t) { return t.teamId === teamId; }).forEach(function (t) { data.tournamentPlayers.filter(function (tp) { return tp.tournamentId === t.id && tp.globalPlayerId === globalPlayerId; }).forEach(function (tp) { tp.active = false; tp.updatedAt = nowIso(); }); }); return null; } var row2 = ensureTeamPlayer(teamId, globalPlayerId, membership === 'team' ? 'team' : 'support', gp.defaultSkills || defaultSkills()); data.tournaments.filter(function (t) { return t.teamId === teamId; }).forEach(function (t) { ensureTournamentPlayerFromTeam(t.id, row2); }); return row2; }
@@ -720,13 +903,13 @@
     var green = d.teams.find(function (tm) { return tm.id === 'team_green_fc' || tm.name === 'Green FC'; });
     if (!green) { green = { id: 'team_green_fc', name: 'Green FC', color: '#0b5d3b', colorName: 'Forest Green', backgroundSrc: 'assets/soccer-background.png', active: true, createdAt: nowIso(), updatedAt: nowIso() }; d.teams.push(green); }
     green.id = green.id || 'team_green_fc'; green.name = green.name || 'Green FC'; green.color = green.color || '#0b5d3b'; green.colorName = green.colorName || 'Forest Green'; green.backgroundSrc = green.backgroundSrc || 'assets/soccer-background.png'; green.active = green.active !== false;
-    var intuit = d.teams.find(function (tm) { return tm.id === 'team_intuit_united' || tm.name === 'Intuit United'; });
-    if (!intuit) { intuit = { id: 'team_intuit_united', name: 'Intuit United', color: '#1769ff', colorName: 'Blue', backgroundSrc: 'assets/team-backgrounds/intuit-united-blue.png', active: true, createdAt: nowIso(), updatedAt: nowIso() }; d.teams.push(intuit); }
-    intuit.id = intuit.id || 'team_intuit_united'; intuit.name = intuit.name || 'Intuit United'; intuit.color = intuit.color || '#1769ff'; intuit.colorName = intuit.colorName || 'Blue'; intuit.backgroundSrc = intuit.backgroundSrc || 'assets/team-backgrounds/intuit-united-blue.png'; intuit.active = intuit.active !== false;
-    d.tournaments.forEach(function (t) { if (!t.teamId) t.teamId = (t.teamName === 'Intuit United') ? intuit.id : green.id; if (!t.teamName) t.teamName = (d.teams.find(function (tm) { return tm.id === t.teamId; }) || green).name; });
+    var intuit = d.teams.find(function (tm) { return tm.id === 'team_intuit_united' || tm.name === 'Intuit United' || tm.name === 'Intuit United FC'; });
+    if (!intuit) { intuit = { id: 'team_intuit_united', name: 'Intuit United FC', color: '#1769ff', colorName: 'Blue', backgroundSrc: 'assets/team-backgrounds/intuit-united-blue.png', active: true, createdAt: nowIso(), updatedAt: nowIso() }; d.teams.push(intuit); }
+    intuit.id = intuit.id || 'team_intuit_united'; intuit.name = 'Intuit United FC'; intuit.color = intuit.color || '#1769ff'; intuit.colorName = intuit.colorName || 'Blue'; intuit.backgroundSrc = intuit.backgroundSrc || 'assets/team-backgrounds/intuit-united-blue.png'; intuit.active = intuit.active !== false;
+    d.tournaments.forEach(function (t) { if (!t.teamId) t.teamId = (/Intuit United|Intuit FC|Intuit United FC/i.test(t.teamName || '')) ? intuit.id : green.id; if (!t.teamName) t.teamName = (d.teams.find(function (tm) { return tm.id === t.teamId; }) || green).name; });
     if (!d.tournaments.some(function (t) { return t.teamId === intuit.id; })) {
       var first = '2026-07-22';
-      d.tournaments.push({ id: 't_intuit_united_s1', teamId: intuit.id, name: 'Season 1', teamName: 'Intuit United', defaultDay: 'Wednesday', location: '', startDate: first, weekCount: 7, matchTarget: 7, skipDates: [], createdAt: nowIso(), updatedAt: nowIso(), archived: false });
+      d.tournaments.push({ id: 't_intuit_united_s1', teamId: intuit.id, name: 'Season 1', teamName: 'Intuit United FC', defaultDay: 'Wednesday', location: '', startDate: first, weekCount: 8, matchTarget: 8, skipDates: [], createdAt: nowIso(), updatedAt: nowIso(), archived: false });
     }
     d.tournamentPlayers.forEach(function (tp) {
       var t = d.tournaments.find(function (x) { return x.id === tp.tournamentId; });
@@ -764,6 +947,7 @@
     d.teams = Array.isArray(d.teams) ? d.teams : [];
     d.teamPlayers = Array.isArray(d.teamPlayers) ? d.teamPlayers : [];
     ensureV5Teams(d);
+    ensureIntuitUnitedBaseline(d);
     d.customAvatars = Array.isArray(d.customAvatars) ? d.customAvatars : [];
     d.customAvatars.forEach(function (a, index) {
       if (!a.id) a.id = uid("avatar");
@@ -775,7 +959,7 @@
     });
     d.tournaments.forEach(function (t) {
       if (t.archived === undefined) t.archived = false;
-      if ((t.id === 't_intuit_united_s1' || (t.teamName === 'Intuit United' && t.name === 'Season 1')) && !t._startDateUserAdjusted) { t.startDate = '2026-07-22'; t.defaultDay = 'Wednesday'; }
+      if ((t.id === 't_intuit_united_s1' || ((t.teamName === 'Intuit United' || t.teamName === 'Intuit United FC') && t.name === 'Season 1')) && !t._startDateUserAdjusted) { t.startDate = '2026-07-22'; t.defaultDay = 'Wednesday'; }
       var ms = (d.matches || []).filter(function (m) { return m.tournamentId === t.id; });
       var dates = ms.map(function (m) { return m.date; }).filter(Boolean).sort();
       if (!t.startDate && dates.length) t.startDate = dates[0];
@@ -1052,7 +1236,7 @@
       if (name === "Lucas") skills = { forward: 3, wing: 4, center: 5, defense: 3, goalie: 1 };
       var clean = clampStrongPositions(skills, tournamentId); skills = clean.skills; var pos = derivePositions(skills, tournamentId);
       var baselineAvatar = name === 'Jose' ? 'avatar-25' : AVATARS[(6 + index) % AVATARS.length].id;
-      globalPlayers.push({ id: gpId, name: name, normalizedName: normalizeAlias(name), aliases: aliases, avatarId: baselineAvatar, defaultSkills: skills, soccerExperience: 'lifelong', runningCapacity: 'm45', createdAt: nowIso(), updatedAt: nowIso() });
+      globalPlayers.push({ id: gpId, name: name, normalizedName: normalizeAlias(name), aliases: aliases, avatarId: baselineAvatar, defaultSkills: skills, soccerExperience: 'lifelong', runningCapacity: 'm45', email: '', emails: [], createdAt: nowIso(), updatedAt: nowIso() });
       tPlayers.push({ id: uid("tp"), tournamentId: tournamentId, globalPlayerId: gpId, membership: membership, skills: clone(skills), primaryPosition: pos.primary, secondaryPosition: pos.secondary, goalieEligible: skills.goalie >= 3, tournamentGoalie: name === "Franco", createdAt: nowIso(), updatedAt: nowIso() });
     });
     var first = nextWeekdayDate("Tuesday");
@@ -1995,6 +2179,7 @@
       (state.confirmRemovePlayerId ? renderRemovePlayerDialog() : '') +
       (state.profilePlayerId ? renderPlayerProfileDrawer() : '') +
       (state.avatarTarget ? renderAvatarModal() : '') +
+      (state.bulkRosterPreview ? renderBulkRosterImportModal() : '') +
       '</div>';
   }
   function navClass(view) { return state.view === view ? "active" : ""; }
@@ -2141,8 +2326,8 @@
     var notInTeam = (data.globalPlayers || []).filter(function (gp) { return !teamPlayer(team.id, gp.id); });
     var bg = teamBackground(team);
     return '<div class="grid team-page">' +
-      '<div class="card team-header-card team-brand-card"><div class="team-bg-preview" style="background-image:' + (bg ? 'url(' + escapeAttr(bg) + ')' : 'none') + '"></div><div class="row space"><div><div class="eyebrow">Team workspace</div><h2>' + escapeHtml(team.name || 'Team') + '</h2><div class="subtext">Roster/support membership is specific to this team. Pills show when a player also belongs to another team.</div></div><div class="row"><button class="btn" onclick="app.addPlayerPrompt()">Add player</button><button class="btn secondary" onclick="app.addExistingPlayerToTeamPrompt()">Add existing</button><button class="btn secondary" onclick="app.go(\'tournaments\')">Tournaments</button></div></div>' +
-      '<div class="team-branding-grid"><div><label>Team name</label><input value="' + escapeAttr(team.name || '') + '" onchange="app.updateTeam(\'name\',this.value)"></div><div><label>Team color</label><div class="color-control"><input type="color" value="' + escapeAttr(team.color || '#1769ff') + '" onchange="app.updateTeam(\'color\',this.value)"><span class="color-preview" style="background:' + escapeAttr(team.color || '#1769ff') + '"></span><strong>' + escapeHtml(team.colorName || team.color || 'Team color') + '</strong></div><div class="color-swatches"><button style="background:#0b5d3b" onclick="app.updateTeam(\'color\',\'#0b5d3b\')" title="Forest Green"></button><button style="background:#1769ff" onclick="app.updateTeam(\'color\',\'#1769ff\')" title="Blue"></button><button style="background:#7c3aed" onclick="app.updateTeam(\'color\',\'#7c3aed\')" title="Purple"></button><button style="background:#f59e0b" onclick="app.updateTeam(\'color\',\'#f59e0b\')" title="Gold"></button></div></div><div><label>Team background</label><div class="row"><input id="teamBackgroundUpload" type="file" accept="image/*"><button class="btn small secondary" onclick="app.uploadTeamBackground()">Upload</button><button class="btn small ghost" onclick="app.clearTeamBackground()">Reset</button></div></div><div><label>Active tournament</label><div class="readonly-chip">' + escapeHtml(t ? t.name : 'No tournament yet') + '</div></div></div>' +
+      '<div class="card team-header-card team-brand-card"><div class="team-bg-preview" style="background-image:' + (bg ? 'url(' + escapeAttr(bg) + ')' : 'none') + '"></div><div class="row space"><div><div class="eyebrow">Team workspace</div><h2>' + escapeHtml(team.name || 'Team') + '</h2><div class="subtext">Roster/support membership is specific to this team. Pills show when a player also belongs to another team.</div></div><div class="row"><button class="btn" onclick="app.addPlayerPrompt()">Add player</button><button class="btn secondary" onclick="app.addExistingPlayerToTeamPrompt()">Add existing</button><button class="btn secondary" onclick="document.getElementById(\'teamRosterCsvUpload\').click()">Bulk CSV</button><button class="btn secondary" onclick="app.go(\'tournaments\')">Tournaments</button><button class="btn danger secondary-danger" onclick="app.deleteActiveTeamPrompt()">Delete team</button></div></div>' +
+      '<input id="teamRosterCsvUpload" class="hidden-file-input" type="file" accept=".csv,text/csv" onchange="app.previewRosterCsvImport(this)"><div class="team-branding-grid"><div><label>Team name</label><input value="' + escapeAttr(team.name || '') + '" onchange="app.updateTeam(\'name\',this.value)"></div><div><label>Team color</label><div class="color-picker-card"><div class="color-control"><input type="color" value="' + escapeAttr(team.color || '#1769ff') + '" onchange="app.updateTeam(\'color\',this.value)"><span class="color-preview" style="background:' + escapeAttr(team.color || '#1769ff') + '"></span><strong>' + escapeHtml(team.colorName || team.color || 'Team color') + '</strong></div><div class="color-swatches"><button class="' + ((team.color || '').toLowerCase() === '#0b5d3b' ? 'selected' : '') + '" style="background:#0b5d3b" onclick="app.updateTeam(\'color\',\'#0b5d3b\')" title="Forest Green" aria-label="Forest Green"></button><button class="' + ((team.color || '').toLowerCase() === '#1769ff' ? 'selected' : '') + '" style="background:#1769ff" onclick="app.updateTeam(\'color\',\'#1769ff\')" title="Blue" aria-label="Blue"></button><button class="' + ((team.color || '').toLowerCase() === '#7c3aed' ? 'selected' : '') + '" style="background:#7c3aed" onclick="app.updateTeam(\'color\',\'#7c3aed\')" title="Purple" aria-label="Purple"></button><button class="' + ((team.color || '').toLowerCase() === '#f59e0b' ? 'selected' : '') + '" style="background:#f59e0b" onclick="app.updateTeam(\'color\',\'#f59e0b\')" title="Gold" aria-label="Gold"></button></div></div></div><div><label>Team background</label><div class="row"><input id="teamBackgroundUpload" type="file" accept="image/*"><button class="btn small secondary" onclick="app.uploadTeamBackground()">Upload</button><button class="btn small ghost" onclick="app.clearTeamBackground()">Reset</button></div><div class="subtext tight">This image appears in the Home / Next Match hero.</div></div><div><label>Active tournament</label><div class="readonly-chip">' + escapeHtml(t ? t.name : 'No tournament yet') + '</div></div></div>' +
       '<div class="kpi"><div class="pill"><div class="num">' + rosterRows.length + '</div><div class="txt">Roster</div></div><div class="pill"><div class="num">' + supportRows.length + '</div><div class="txt">Support</div></div><div class="pill"><div class="num">' + notInTeam.length + '</div><div class="txt">Not in team</div></div></div></div>' +
       '<div class="card team-section"><div class="row space"><div><h3>Roster players</h3><div class="subtext">Regular players for ' + escapeHtml(team.name || 'this team') + '.</div></div></div><div class="list roster-list compact-roster">' + (rosterRows.length ? rosterRows.map(renderTeamMemberRow).join('') : '<div class="empty-state">No roster players.</div>') + '</div></div>' +
       '<div class="card support-section"><div class="row space"><div><h3>Support players</h3><div class="subtext">Support players are available for this selected team. They may also be roster/support elsewhere, shown by pills.</div></div></div><div class="list roster-list compact-roster">' + (supportRows.length ? supportRows.map(renderTeamMemberRow).join('') : '<div class="empty-state">No support players.</div>') + '</div></div>' +
@@ -2155,11 +2340,11 @@
     if (tp) return renderRosterPlayer(tp);
     var gp = globalPlayer(row.globalPlayerId);
     if (!gp) return '';
-    return '<div class="pool-row"><button class="avatar small" onclick="app.openPlayerProfile(\'' + gp.id + '\')"><img src="' + avatarById(gp.avatarId).src + '" alt=""></button><div><button class="link-title" onclick="app.openPlayerProfile(\'' + gp.id + '\')">' + escapeHtml(gp.name) + '</button><div class="team-pill-row">' + teamMembershipPills(gp.id) + '</div></div>' + membershipBadge(row.membership) + '</div>';
+    return '<div class="pool-row"><button class="avatar-button" onclick="app.openPlayerProfile(\'' + gp.id + '\')">' + avatarHtml(gp.id, gp.avatarId, 'small') + '</button><div><button class="link-title" onclick="app.openPlayerProfile(\'' + gp.id + '\')">' + escapeHtml(gp.name) + '</button><div class="team-pill-row">' + teamMembershipPills(gp.id) + '</div></div>' + membershipBadge(row.membership) + '</div>';
   }
   function renderPlayersNotInTeam(players) {
     return (players || []).map(function (gp) {
-      return '<div class="pool-row not-in-team-row"><button class="avatar small" onclick="app.openPlayerProfile(\'' + gp.id + '\')"><img src="' + avatarById(gp.avatarId).src + '" alt=""></button><div><button class="link-title" onclick="app.openPlayerProfile(\'' + gp.id + '\')">' + escapeHtml(gp.name) + '</button><div class="team-pill-row">' + teamMembershipPills(gp.id) + '</div></div><div class="row"><button class="btn tiny secondary" onclick="app.addGlobalPlayerToActiveTeamAs(\'' + gp.id + '\',\'support\')">Add support</button><button class="btn tiny ghost" onclick="app.addGlobalPlayerToActiveTeamAs(\'' + gp.id + '\',\'team\')">Add roster</button></div></div>';
+      return '<div class="pool-row not-in-team-row"><button class="avatar-button" onclick="app.openPlayerProfile(\'' + gp.id + '\')">' + avatarHtml(gp.id, gp.avatarId, 'small') + '</button><div><button class="link-title" onclick="app.openPlayerProfile(\'' + gp.id + '\')">' + escapeHtml(gp.name) + '</button><div class="team-pill-row">' + teamMembershipPills(gp.id) + '</div></div><div class="row"><button class="btn tiny secondary" onclick="app.addGlobalPlayerToActiveTeamAs(\'' + gp.id + '\',\'support\')">Add support</button><button class="btn tiny ghost" onclick="app.addGlobalPlayerToActiveTeamAs(\'' + gp.id + '\',\'team\')">Add roster</button></div></div>';
     }).join('') || '<div class="empty-state">Every player in the system already belongs to this team.</div>';
   }
   function renderRosterPlayer(tp) {
@@ -2175,12 +2360,12 @@
     var gloveClass = tp.tournamentGoalie ? 'selected' : (skills.goalie >= 3 ? 'eligible' : 'disabled');
     var gloveTitle = tp.tournamentGoalie ? 'Tournament goalie' : (skills.goalie >= 3 ? 'Set as tournament goalie' : 'Needs 3+ goalie stars');
     if (!editing) {
-      return '<div class="roster-matrix-row ' + (skills.goalie >= 3 ? 'goalie-capable ' : '') + (membership === 'support' ? 'support-player' : 'team-player') + '"><div class="avatar small"><img src="' + avatarById(avatarId).src + '" alt=""></div>' +
+      return '<div class="roster-matrix-row ' + (skills.goalie >= 3 ? 'goalie-capable ' : '') + (membership === 'support' ? 'support-player' : 'team-player') + '">' + avatarHtml(gp.id, avatarId, 'small') +
         '<div class="roster-identity"><button class="link-title" onclick="app.openPlayerProfile(\'' + gp.id + '\')">' + escapeHtml(name) + '</button><div class="team-pill-row compact">' + teamMembershipPills(gp.id) + '</div><div class="row mini-meta">' + membershipBadge(membership) + '<span class="badge">' + escapeHtml(tp.primaryPosition || pos.primary) + ' / ' + escapeHtml(tp.secondaryPosition || pos.secondary) + '</span></div></div>' +
         '<div class="skill-mini-grid">' + POS_KEYS.map(function (k) { return skillReadoutCompact(skills, k); }).join('') + '</div>' +
         '<div class="roster-actions compact-actions"><button class="btn small secondary" onclick="app.editPlayer(\'' + tp.id + '\')">✎</button><button class="glove-button ' + gloveClass + '" title="' + gloveTitle + '" onclick="app.setTournamentGoalie(\'' + tp.id + '\')">🧤</button><button class="x-button" onclick="app.askRemoveTournamentPlayer(\'' + tp.id + '\')">×</button></div></div>';
     }
-    return '<div class="roster-row editing ' + (skills.goalie >= 3 ? 'goalie-capable ' : '') + (membership === 'support' ? 'support-player' : 'team-player') + '"><button class="avatar" onclick="app.pickAvatar(\'' + gp.id + '\')"><img src="' + avatarById(avatarId).src + '" alt=""></button>' +
+    return '<div class="roster-row editing ' + (skills.goalie >= 3 ? 'goalie-capable ' : '') + (membership === 'support' ? 'support-player' : 'team-player') + '"><button class="avatar-button" onclick="app.pickAvatar(\'' + gp.id + '\')">' + avatarHtml(gp.id, avatarId, '') + '</button>' +
       '<div class="roster-main"><div class="row"><input class="name-inline" value="' + escapeAttr(name) + '" oninput="app.updatePlayerDraft(\'name\',this.value)">' + membershipBadge(membership) + '<span class="badge">' + escapeHtml(pos.primary) + ' / ' + escapeHtml(pos.secondary) + '</span></div>' +
       '<div class="subtext">Edit mode. Changes are saved only after pressing Save.</div><div class="skills compact-skills">' + POS_KEYS.map(function (k) { return skillDraftEditor(skills, k); }).join('') + '</div></div>' +
       '<div class="roster-actions"><select onchange="app.updatePlayerDraft(\'membership\',this.value)"><option value="team" ' + (membership === 'team' ? 'selected' : '') + '>Roster</option><option value="support" ' + (membership === 'support' ? 'selected' : '') + '>Support</option></select><button class="glove-button ' + gloveClass + '" title="' + gloveTitle + '" onclick="app.setTournamentGoalie(\'' + tp.id + '\')">🧤</button><button class="btn small green" onclick="app.savePlayerEdit()">Save</button><button class="btn small secondary" onclick="app.cancelPlayerEdit()">Cancel</button><button class="x-button" onclick="app.askRemoveTournamentPlayer(\'' + tp.id + '\')">×</button></div></div>';
@@ -2293,7 +2478,7 @@
       return '<div class="item"><div><div class="row"><div class="player-title">' + escapeHtml(mp.name) + '</div><span class="badge warn">Review</span></div><div class="subtext">Possible match: ' + escapeHtml(sGp ? sGp.name : '') + '</div></div><div class="row"><button class="btn small green" onclick="app.acceptFuzzy(\'' + mp.matchId + '\',\'' + mp.id + '\')">Use existing</button><button class="btn small amber" onclick="app.rejectFuzzy(\'' + mp.matchId + '\',\'' + mp.id + '\')">Create support</button></div></div>';
     }
     var ctx = playerContext(mp);
-    return '<div class="item confirm-player-row"><div class="row"><button class="avatar small" onclick="app.openPlayerProfile(\'' + (ctx.globalPlayer ? ctx.globalPlayer.id : '') + '\')"><img src="' + ctx.avatar.src + '"></button><div><button class="link-title" onclick="app.openPlayerProfile(\'' + (ctx.globalPlayer ? ctx.globalPlayer.id : '') + '\')">' + escapeHtml(ctx.name) + '</button><div class="subtext">Signup #' + mp.signupOrder + ' · ' + escapeHtml(mp.availability) + ' · ' + mp.probability + '%</div><div class="team-pill-row compact">' + (ctx.globalPlayer ? teamMembershipPills(ctx.globalPlayer.id) : '') + '</div></div></div><div class="row"><button class="btn tiny secondary" title="Move earlier in sign-up order" onclick="app.moveMatchPlayerOrder(\'' + mp.id + '\',-1)">↑</button><button class="btn tiny secondary" title="Move later in sign-up order" onclick="app.moveMatchPlayerOrder(\'' + mp.id + '\',1)">↓</button>' + membershipBadge(ctx.membership) + '<label class="row" style="margin:0;text-transform:none;letter-spacing:0"><input style="width:auto" type="checkbox" ' + (mp.included ? 'checked' : '') + ' onchange="app.toggleMatchPlayer(\'' + mp.id + '\',this.checked)"> Include</label><button class="btn small secondary" onclick="app.removeMatchPlayer(\'' + mp.id + '\')">Remove</button></div></div>';
+    return '<div class="item confirm-player-row"><div class="row"><button class="avatar-button" onclick="app.openPlayerProfile(\'' + (ctx.globalPlayer ? ctx.globalPlayer.id : '') + '\')">' + avatarHtml(ctx.globalPlayer ? ctx.globalPlayer.id : null, ctx.avatarId, 'small') + '</button><div><button class="link-title" onclick="app.openPlayerProfile(\'' + (ctx.globalPlayer ? ctx.globalPlayer.id : '') + '\')">' + escapeHtml(ctx.name) + '</button><div class="subtext">Signup #' + mp.signupOrder + ' · ' + escapeHtml(mp.availability) + ' · ' + mp.probability + '%</div><div class="team-pill-row compact">' + (ctx.globalPlayer ? teamMembershipPills(ctx.globalPlayer.id) : '') + '</div></div></div><div class="row"><button class="btn tiny secondary" title="Move earlier in sign-up order" onclick="app.moveMatchPlayerOrder(\'' + mp.id + '\',-1)">↑</button><button class="btn tiny secondary" title="Move later in sign-up order" onclick="app.moveMatchPlayerOrder(\'' + mp.id + '\',1)">↓</button>' + membershipBadge(ctx.membership) + '<label class="row" style="margin:0;text-transform:none;letter-spacing:0"><input style="width:auto" type="checkbox" ' + (mp.included ? 'checked' : '') + ' onchange="app.toggleMatchPlayer(\'' + mp.id + '\',this.checked)"> Include</label><button class="btn small secondary" onclick="app.removeMatchPlayer(\'' + mp.id + '\')">Remove</button></div></div>';
   }
 
   function gkCapableMatchPlayers(match) {
@@ -2350,14 +2535,14 @@
     var ctx = mp ? playerContext(mp) : null;
     var active = state.activeSlot === slot.position ? ' active' : '';
     var filled = ctx ? ' filled' : '';
-    return '<div class="position-slot' + active + filled + '" style="' + slotStyle(slot) + '" onclick="app.selectSlot(\'' + slot.position + '\')">' + (ctx ? '<button class="clear" onclick="event.stopPropagation();app.clearSlot(\'' + match.id + '\',\'' + slot.position + '\')">x</button><div class="avatar"><img src="' + ctx.avatar.src + '"></div><div class="name">' + escapeHtml(ctx.name.split(' ')[0]) + '</div><div class="pos">' + slot.position + '</div>' : '<div class="pos">' + slot.position + '</div><div style="font-size:28px;font-weight:1000">+</div>') + '</div>';
+    return '<div class="position-slot' + active + filled + '" style="' + slotStyle(slot) + '" onclick="app.selectSlot(\'' + slot.position + '\')">' + (ctx ? '<button class="clear" onclick="event.stopPropagation();app.clearSlot(\'' + match.id + '\',\'' + slot.position + '\')">x</button>' + avatarHtml(ctx.globalPlayer ? ctx.globalPlayer.id : null, ctx.avatarId, '') + '<div class="name">' + escapeHtml(ctx.name.split(' ')[0]) + '</div><div class="pos">' + slot.position + '</div>' : '<div class="pos">' + slot.position + '</div><div style="font-size:28px;font-weight:1000">+</div>') + '</div>';
   }
   function renderAssignablePlayer(mp, used) {
     var ctx = playerContext(mp);
-    return '<button class="player-chip ' + (used ? 'dim' : '') + '" onclick="app.assignSelected(\'' + mp.id + '\')"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><div class="player-title">' + escapeHtml(ctx.name) + '</div><div class="subtext">' + escapeHtml(ctx.primaryPosition) + ' / ' + escapeHtml(ctx.secondaryPosition) + ' / #' + mp.signupOrder + '</div></div>' + membershipBadge(ctx.membership) + '</button>';
+    return '<button class="player-chip ' + (used ? 'dim' : '') + '" onclick="app.assignSelected(\'' + mp.id + '\')">' + avatarHtml(ctx.globalPlayer ? ctx.globalPlayer.id : null, ctx.avatarId, 'small') + '<div><div class="player-title">' + escapeHtml(ctx.name) + '</div><div class="subtext">' + escapeHtml(ctx.primaryPosition) + ' / ' + escapeHtml(ctx.secondaryPosition) + ' / #' + mp.signupOrder + '</div></div>' + membershipBadge(ctx.membership) + '</button>';
   }
   function renderBenchChip(ctx) {
-    return '<div class="player-chip"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><div class="player-title">' + escapeHtml(ctx.name.split(' ')[0]) + '</div><div class="subtext">' + escapeHtml(ctx.primaryPosition) + '</div></div></div>';
+    return '<div class="player-chip">' + avatarHtml(ctx.globalPlayer ? ctx.globalPlayer.id : null, ctx.avatarId, 'small') + '<div><div class="player-title">' + escapeHtml(ctx.name.split(' ')[0]) + '</div><div class="subtext">' + escapeHtml(ctx.primaryPosition) + '</div></div></div>';
   }
   function renderStepSubs(match) {
     var cfg = rotationConfig(match.rotationStyle || 'balanced');
@@ -2423,7 +2608,7 @@
     return '<div class="sub-row smart-sub-row compact-sub-row"><div><label>IN</label><select class="in-select" onchange="app.updateSub(\'' + match.id + '\',\'' + s.id + '\',\'playerInId\',this.value)">' + playerOptionsFrom(inPlayers, s.playerInId) + '</select></div><div>' + renderSubPositionControl(match, s) + '</div><div><label>OUT</label><select class="out-select" onchange="app.updateSub(\'' + match.id + '\',\'' + s.id + '\',\'playerOutId\',this.value)">' + playerOutOptionsFrom(match, outPlayers, s.playerOutId, s) + '</select></div><button class="btn small danger" onclick="app.deleteSub(\'' + match.id + '\',\'' + s.id + '\')">×</button></div>';
   }
   function renderMinutes(players, minutes) {
-    return '<div style="margin-top:12px"><h3>Estimated minutes</h3><div class="minutes-grid">' + players.map(function (mp) { var ctx = playerContext(mp); var min = Math.round(minutes[mp.id] || 0); return '<div class="minute-card"><div class="row"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><div class="player-title">' + escapeHtml(ctx.name) + '</div><div class="subtext">' + min + ' / 50 min</div></div></div><div class="minute-bar"><span style="width:' + Math.min(100, min * 2) + '%"></span></div></div>'; }).join('') + '</div></div>';
+    return '<div style="margin-top:12px"><h3>Estimated minutes</h3><div class="minutes-grid">' + players.map(function (mp) { var ctx = playerContext(mp); var min = Math.round(minutes[mp.id] || 0); return '<div class="minute-card"><div class="row">' + avatarHtml(ctx.globalPlayer ? ctx.globalPlayer.id : null, ctx.avatarId, 'small') + '<div><div class="player-title">' + escapeHtml(ctx.name) + '</div><div class="subtext">' + min + ' / 50 min</div></div></div><div class="minute-bar"><span style="width:' + Math.min(100, min * 2) + '%"></span></div></div>'; }).join('') + '</div></div>';
   }
   function goalkeeperIdsForPlan(match) {
     var ids = {};
@@ -2615,7 +2800,7 @@
       var targetPct = Math.max(0, Math.min(100, target / 50 * 100));
       var minuteText = live ? planned + ' planned · ~' + full + ' all-in' : full + ' min';
       var targetText = isGk ? 'GK target ' + Math.round(target) + ' min' : 'Target floor ' + Math.round(targetFloor) + ' min';
-      return '<div class="time-row ' + status + (isGk ? ' gk-row' : '') + '" style="--planned:' + plannedPct + '%;--full:' + fullPct + '%;--target:' + targetPct + '%"><div class="time-player"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><strong>' + escapeHtml(ctx.name) + '</strong><span>' + escapeHtml(targetText) + '</span></div></div><div class="time-track"><i class="allin"></i><i class="planned"></i><b></b></div><div class="time-value">' + escapeHtml(minuteText) + (status === 'low' ? '<em>Below target</em>' : '') + '</div></div>';
+      return '<div class="time-row ' + status + (isGk ? ' gk-row' : '') + '" style="--planned:' + plannedPct + '%;--full:' + fullPct + '%;--target:' + targetPct + '%"><div class="time-player">' + avatarHtml(ctx.globalPlayer ? ctx.globalPlayer.id : null, ctx.avatarId, 'small') + '<div><strong>' + escapeHtml(ctx.name) + '</strong><span>' + escapeHtml(targetText) + '</span></div></div><div class="time-track"><i class="allin"></i><i class="planned"></i><b></b></div><div class="time-value">' + escapeHtml(minuteText) + (status === 'low' ? '<em>Below target</em>' : '') + '</div></div>';
     }).join('');
     var gkLabel = (match.keeperPlan || 'fixed') === 'split' ? 'GK half target: 25 min' : 'GK target: 50 min';
     return '<div class="time-chart"><div class="time-chart-head"><strong>Playing time balance</strong><span>Outfield target floor: ' + Math.round(targetFloor) + ' min · planned avg ' + Math.round(plannedAvg) + ' min · ' + gkLabel + '</span></div>' + rows + '</div>';
@@ -2652,7 +2837,7 @@
     var nextBench = benchPlayers(match);
     var benchHtml = nextBench.map(function (mp) {
       var ctx = playerContext(mp);
-      return '<div class="bench-card"><div class="avatar small"><img src="' + ctx.avatar.src + '"></div><div><strong>' + escapeHtml(ctx.name.split(' ')[0]) + '</strong><span>' + escapeHtml(ctx.primaryPosition) + '</span></div>' + membershipBadge(ctx.membership) + '</div>';
+      return '<div class="bench-card">' + avatarHtml(ctx.globalPlayer ? ctx.globalPlayer.id : null, ctx.avatarId, 'small') + '<div><strong>' + escapeHtml(ctx.name.split(' ')[0]) + '</strong><span>' + escapeHtml(ctx.primaryPosition) + '</span></div>' + membershipBadge(ctx.membership) + '</div>';
     }).join('') || '<div class="share-live">No bench</div>';
     var meta = metaParts(match);
     return '<div class="share-poster" id="shareCard"><div class="poster-sun">7v7</div><div class="poster-header"><div><div class="eyebrow light">Match plan</div><h2>' + escapeHtml(t.teamName) + '</h2>' + (meta.length ? '<p>' + escapeHtml(meta.join(' · ')) + '</p>' : '') + '</div><div class="poster-badge"><strong>' + escapeHtml(match.formation) + '</strong><span>formation</span></div></div>' +
@@ -2681,7 +2866,7 @@
     var mp = playerId ? data.matchPlayers.find(function (p) { return p.id === playerId; }) : null;
     if (!mp) return '<div class="share-slot compact-slot empty" style="' + slotStyle(slot) + '"><div class="label">' + slot.position + '</div></div>';
     var ctx = playerContext(mp);
-    return '<div class="share-slot compact-slot filled" style="' + slotStyle(slot) + '"><div class="avatar"><img src="' + ctx.avatar.src + '"></div><div class="label">' + slot.position + ' ' + escapeHtml(ctx.name.split(' ')[0]) + '</div></div>';
+    return '<div class="share-slot compact-slot filled" style="' + slotStyle(slot) + '">' + avatarHtml(ctx.globalPlayer ? ctx.globalPlayer.id : null, ctx.avatarId, '') + '<div class="label">' + slot.position + ' ' + escapeHtml(ctx.name.split(' ')[0]) + '</div></div>';
   }
   function buildShareText(match) {
     var lines = [];
@@ -2973,9 +3158,178 @@
     });
   }
 
+  var AVATAR_RING_COLORS = ['#ef4444','#1769ff','#7c3aed','#f59e0b','#10b981','#ec4899','#0f766e','#f97316'];
+  function avatarDuplicateIndex(globalPlayerId, avatarId) {
+    avatarId = avatarId || (globalPlayer(globalPlayerId) || {}).avatarId;
+    if (!avatarId) return -1;
+    var peers = (data.globalPlayers || []).filter(function (gp) { return gp.avatarId === avatarId; }).sort(function (a, b) { return normalizeAlias(a.name).localeCompare(normalizeAlias(b.name)) || String(a.id).localeCompare(String(b.id)); });
+    if (peers.length <= 1) return -1;
+    return peers.findIndex(function (gp) { return gp.id === globalPlayerId; });
+  }
+  function avatarRingStyle(globalPlayerId, avatarId) {
+    var index = avatarDuplicateIndex(globalPlayerId, avatarId);
+    if (index < 0) return '';
+    var color = AVATAR_RING_COLORS[index % AVATAR_RING_COLORS.length];
+    return ' style="--avatar-ring:' + escapeAttr(color) + ';border-color:' + escapeAttr(color) + '"';
+  }
+  function avatarHtml(globalPlayerId, avatarId, className) {
+    var gp = globalPlayerId ? globalPlayer(globalPlayerId) : null;
+    avatarId = avatarId || (gp && gp.avatarId);
+    return '<div class="avatar ' + (className || '') + '"' + avatarRingStyle(globalPlayerId, avatarId) + '><img src="' + avatarById(avatarId).src + '" alt=""></div>';
+  }
   function membershipBadge(m) { return '<span class="badge ' + (m === 'team' ? 'team' : 'support') + '">' + (m === 'team' ? 'Team' : 'Support') + '</span>'; }
   function weekdayOptions(selected) {
     return ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map(function (d) { return '<option value="' + d + '" ' + (d === selected ? 'selected' : '') + '>' + d + '</option>'; }).join('');
+  }
+
+  function parseCsvText(text) {
+    var rows = [];
+    var row = [];
+    var cell = '';
+    var inQuotes = false;
+    text = String(text || '').replace(/^\ufeff/, '');
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { cell += '"'; i++; }
+          else inQuotes = false;
+        } else cell += ch;
+      } else {
+        if (ch === '"') inQuotes = true;
+        else if (ch === ',') { row.push(cell); cell = ''; }
+        else if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+        else if (ch === '\r') { }
+        else cell += ch;
+      }
+    }
+    row.push(cell);
+    rows.push(row);
+    return rows.filter(function (r) { return r.some(function (c) { return String(c || '').trim(); }); });
+  }
+  function cleanCsvHeader(value) { return normalizeAlias(String(value || '').replace(/\[[^\]]*\]/g, ' ').replace(/"/g, ' ')); }
+  function findCsvColumn(headers, patterns) {
+    var clean = headers.map(cleanCsvHeader);
+    for (var i = 0; i < patterns.length; i++) {
+      var p = normalizeAlias(patterns[i]);
+      var exact = clean.indexOf(p);
+      if (exact >= 0) return exact;
+      for (var j = 0; j < clean.length; j++) if (clean[j].indexOf(p) >= 0) return j;
+    }
+    return -1;
+  }
+  function csvValue(row, idx) { return idx >= 0 ? String(row[idx] || '').trim() : ''; }
+  function levenshtein(a, b) {
+    a = normalizeAlias(a); b = normalizeAlias(b);
+    var m = [];
+    for (var i = 0; i <= b.length; i++) m[i] = [i];
+    for (var j = 0; j <= a.length; j++) m[0][j] = j;
+    for (i = 1; i <= b.length; i++) {
+      for (j = 1; j <= a.length; j++) {
+        m[i][j] = b.charAt(i - 1) === a.charAt(j - 1) ? m[i - 1][j - 1] : Math.min(m[i - 1][j - 1] + 1, Math.min(m[i][j - 1] + 1, m[i - 1][j] + 1));
+      }
+    }
+    return m[b.length][a.length];
+  }
+  function findCsvMatch(name, email, teamId) {
+    var normEmail = normalizeEmail(email);
+    if (normEmail) {
+      var byEmail = (data.globalPlayers || []).find(function (gp) { return emailsForPlayer(gp).indexOf(normEmail) >= 0; });
+      if (byEmail) return { player: byEmail, reason: 'email' };
+    }
+    var n = normalizeAlias(name);
+    var candidates = (data.globalPlayers || []).map(function (gp) {
+      var aliases = [gp.name].concat(gp.aliases || []).map(normalizeAlias);
+      var exact = aliases.indexOf(n) >= 0;
+      var starts = aliases.some(function (a) { return a.indexOf(n) === 0 || n.indexOf(a) === 0; });
+      var dist = Math.min.apply(null, aliases.map(function (a) { return levenshtein(a, n); }));
+      var membership = teamPlayer(teamId, gp.id);
+      var score = exact ? 100 : starts ? 85 : Math.max(0, 70 - dist * 8);
+      if (membership && membership.membership === 'team') score += 8;
+      else if (membership) score += 4;
+      return { player: gp, score: score, dist: dist, exact: exact, reason: exact ? 'name' : (starts || dist <= 3 ? 'similar name' : '') };
+    }).filter(function (x) { return x.exact || x.score >= 50 || x.dist <= 3; }).sort(function (a, b) { return b.score - a.score; });
+    return candidates.length ? { player: candidates[0].player, reason: candidates[0].reason || 'similar name', alternatives: candidates.slice(1, 4).map(function (x) { return x.player; }) } : null;
+  }
+  function buildRosterCsvPreview(text, teamId) {
+    var table = parseCsvText(text);
+    if (table.length < 2) return { teamId: teamId, rows: [] };
+    var headers = table[0];
+    var nameIdx = findCsvColumn(headers, ['name']);
+    var emailIdx = findCsvColumn(headers, ['email address', 'email']);
+    var email2Idx = findCsvColumn(headers, ['email']);
+    if (email2Idx === emailIdx) email2Idx = -1;
+    var expIdx = findCsvColumn(headers, ['how long have you been playing soccer', 'soccer experience']);
+    var runIdx = findCsvColumn(headers, ['how much can you run', 'running capacity']);
+    var avatarIdx = findCsvColumn(headers, ['select your avatar', 'avatar']);
+    var fwdIdx = findCsvColumn(headers, ['forward']);
+    var wingIdx = findCsvColumn(headers, ['wing']);
+    var ctrIdx = findCsvColumn(headers, ['center mid', 'center', 'ctr']);
+    var defIdx = findCsvColumn(headers, ['defense']);
+    var gkIdx = findCsvColumn(headers, ['goal keeper', 'goalie', 'keeper']);
+    var rows = table.slice(1).map(function (raw, i) {
+      var name = titleCaseMinor(csvValue(raw, nameIdx));
+      var email = normalizeEmail(csvValue(raw, emailIdx));
+      var email2 = normalizeEmail(csvValue(raw, email2Idx));
+      var emails = [];
+      [email, email2].forEach(function (e) { if (e && emails.indexOf(e) < 0) emails.push(e); });
+      var skills = clampSurveySkillsForData(data, teamId, {
+        forward: scoreFromSurvey(csvValue(raw, fwdIdx)),
+        wing: scoreFromSurvey(csvValue(raw, wingIdx)),
+        center: scoreFromSurvey(csvValue(raw, ctrIdx)),
+        defense: scoreFromSurvey(csvValue(raw, defIdx)),
+        goalie: scoreFromSurvey(csvValue(raw, gkIdx))
+      });
+      var match = name ? findCsvMatch(name, emails[0] || '', teamId) : null;
+      var warning = '';
+      if (!name) warning = 'Missing player name';
+      else if (match && match.reason === 'similar name') warning = 'Similar-name match. Validate before applying.';
+      var alts = match && match.alternatives ? match.alternatives.map(function (gp) { return gp.name; }) : [];
+      return {
+        rowNumber: i + 2,
+        name: name,
+        email: emails[0] || '',
+        emails: emails,
+        avatarId: avatarNumberToId(csvValue(raw, avatarIdx)),
+        experience: soccerExperienceFromSurvey(csvValue(raw, expIdx)),
+        running: runningCapacityFromSurvey(csvValue(raw, runIdx)),
+        skills: skills,
+        matchId: match && match.player && match.player.id,
+        matchReason: match && match.reason,
+        alternatives: alts,
+        warning: warning
+      };
+    });
+    return { teamId: teamId, rows: rows };
+  }
+
+  function renderBulkRosterImportModal() {
+    var preview = state.bulkRosterPreview;
+    if (!preview) return '';
+    var rows = preview.rows || [];
+    var warnings = rows.filter(function (r) { return r.warning; }).length;
+    var matched = rows.filter(function (r) { return r.matchId; }).length;
+    var created = rows.length - matched;
+    return '<div class="overlay" onclick="app.cancelRosterCsvImport()"><div class="modal roster-import-modal" onclick="event.stopPropagation()"><div class="row space"><div><div class="eyebrow">CSV roster validation</div><h2>Review roster import</h2><div class="subtext">Target team: ' + escapeHtml((teamById(preview.teamId) || activeTeam()).name || 'selected team') + '. Matched players can update email, avatar, skills, experience, and running capacity after you apply.</div></div><button class="btn secondary" onclick="app.cancelRosterCsvImport()">Close</button></div>' +
+      '<div class="kpi compact"><div class="pill"><div class="num">' + rows.length + '</div><div class="txt">Rows</div></div><div class="pill"><div class="num">' + matched + '</div><div class="txt">Matched</div></div><div class="pill"><div class="num">' + created + '</div><div class="txt">New</div></div><div class="pill"><div class="num">' + warnings + '</div><div class="txt">Warnings</div></div></div>' +
+      '<div class="csv-review-list">' + rows.map(renderRosterCsvReviewRow).join('') + '</div><div class="row"><button class="btn" onclick="app.applyRosterCsvImport()">Apply import</button><button class="btn secondary" onclick="app.cancelRosterCsvImport()">Cancel</button></div></div></div>';
+  }
+  function renderRosterCsvReviewRow(row) {
+    var match = row.matchId ? globalPlayer(row.matchId) : null;
+    var skills = row.skills || defaultSkills();
+    var target = match ? '<span class="badge team">Matched</span><strong>' + escapeHtml(match.name) + '</strong>' : '<span class="badge support">New</span><strong>Create player</strong>';
+    var emailText = row.email ? row.email : 'No email';
+    var updates = match ? proposedCsvUpdates(match, row) : ['Create as Roster for selected team', 'Support for every other active team'];
+    return '<div class="csv-review-row ' + (row.warning ? 'warn' : '') + '"><div><div class="row compact-row"><strong>' + escapeHtml(row.name || 'Unnamed') + '</strong>' + (row.warning ? '<span class="badge warn">Review</span>' : '') + '</div><div class="subtext">' + escapeHtml(emailText) + '</div><div class="skill-mini-grid csv-skills">' + POS_KEYS.map(function (k) { return skillReadoutCompact(skills, k); }).join('') + '</div></div><div><div class="csv-match-target">' + target + '</div><ul>' + updates.slice(0,4).map(function (u) { return '<li>' + escapeHtml(u) + '</li>'; }).join('') + '</ul></div></div>';
+  }
+  function proposedCsvUpdates(gp, row) {
+    var out = [];
+    if (row.email && emailsForPlayer(gp).indexOf(normalizeEmail(row.email)) < 0) out.push('Add email: ' + row.email);
+    if (row.avatarId && gp.avatarId !== row.avatarId) out.push('Avatar: ' + (avatarById(gp.avatarId).label || gp.avatarId) + ' → ' + (avatarById(row.avatarId).label || row.avatarId));
+    if (row.experience && gp.soccerExperience !== row.experience) out.push('Experience: ' + soccerExperienceMeta(row.experience).detail);
+    if (row.running && gp.runningCapacity !== row.running) out.push('Running: ' + runningCapacityMeta(row.running).detail);
+    out.push('Update role/skills from CSV after review');
+    return out;
   }
   function renderAvatarModal() {
     var target = globalPlayer(state.avatarTarget);
@@ -2997,7 +3351,8 @@
     var memberRows = teamPlayersForGlobal(gp.id);
     var canDelete = memberRows.length === 0;
     return '<div class="overlay side-overlay" onclick="app.closePlayerProfile()"><div class="side-panel player-profile-panel" onclick="event.stopPropagation()"><div class="row space"><div><div class="eyebrow">Player profile</div><h2>' + escapeHtml(gp.name) + '</h2><div class="team-pill-row">' + teamMembershipPills(gp.id) + '</div></div><button class="btn secondary" onclick="app.closePlayerProfile()">Close</button></div>' +
-      '<div class="profile-hero"><button class="avatar xl" onclick="app.pickAvatar(\'' + gp.id + '\')"><img src="' + avatarById(gp.avatarId).src + '" alt=""></button><div><div class="subtext">Global player profile. Ratings, avatar, experience, and engine are shared across teams.</div><div class="skills compact-skills profile-skills">' + POS_KEYS.map(function (k) { return skillReadoutCompact(skills, k); }).join('') + '</div><div class="player-trait-row"><span class="trait-chip experience"><b>' + escapeHtml(exp.icon + ' ' + exp.label) + '</b><em>' + escapeHtml(exp.detail) + '</em></span><span class="trait-chip engine level-' + engine.level + '"><b>' + escapeHtml(engine.icon + ' ' + engine.label) + '</b><em>' + escapeHtml(engine.detail) + '</em></span></div></div></div>' +
+      '<div class="profile-hero"><button class="avatar-button" onclick="app.pickAvatar(\'' + gp.id + '\')">' + avatarHtml(gp.id, gp.avatarId, 'xl') + '</button><div><div class="subtext">Global player profile. Ratings, avatar, email, experience, and engine are shared across teams.</div><div class="skills compact-skills profile-skills">' + POS_KEYS.map(function (k) { return skillReadoutCompact(skills, k); }).join('') + '</div><div class="player-trait-row"><span class="trait-chip experience"><b>' + escapeHtml(exp.icon + ' ' + exp.label) + '</b><em>' + escapeHtml(exp.detail) + '</em></span><span class="trait-chip engine level-' + engine.level + '"><b>' + escapeHtml(engine.icon + ' ' + engine.label) + '</b><em>' + escapeHtml(engine.detail) + '</em></span></div></div></div>' +
+      '<div class="card subtle-card"><h3>Contact</h3><label>Email</label><input value="' + escapeAttr(gp.email || (gp.emails && gp.emails[0]) || '') + '" placeholder="Email for future use" onchange="app.updateGlobalPlayerField(\'' + gp.id + '\',\'email\',this.value)"><div class="subtext tight">Stored now for future roster and communication features.</div></div>' +
       '<div class="card subtle-card trait-editor"><h3>Player background</h3><div class="trait-control-grid"><div><label>Soccer experience</label><div class="segmented-cards">' + ['lt5','fiveTen','lifelong'].map(function (v) { var m = soccerExperienceMeta(v); return '<button class="trait-option ' + (gp.soccerExperience === v ? 'active' : '') + '" onclick="app.updateGlobalPlayerField(\'' + gp.id + '\',\'soccerExperience\',\'' + v + '\')"><strong>' + escapeHtml(m.icon + ' ' + m.label) + '</strong><span>' + escapeHtml(m.detail) + '</span></button>'; }).join('') + '</div></div><div><label>Running capacity</label><div class="segmented-cards stamina">' + ['low','m15','m30','m45','plus45'].map(function (v) { var m = runningCapacityMeta(v); return '<button class="trait-option ' + (gp.runningCapacity === v ? 'active' : '') + '" onclick="app.updateGlobalPlayerField(\'' + gp.id + '\',\'runningCapacity\',\'' + v + '\')"><strong>' + escapeHtml(m.icon + ' ' + m.label) + '</strong><span>' + escapeHtml(m.detail) + '</span></button>'; }).join('') + '</div></div></div></div>' +
       '<div class="card subtle-card"><h3>Team memberships</h3>' + rows.map(function (tm) { var row = teamPlayer(tm.id, gp.id); var role = row ? row.membership : 'none'; return '<div class="membership-row"><span class="team-dot" style="background:' + escapeAttr(tm.color || '#1769ff') + '"></span><strong>' + escapeHtml(tm.name || 'Team') + '</strong><select onchange="app.updateGlobalMembership(\'' + gp.id + '\',\'' + tm.id + '\',this.value)"><option value="team" ' + (role === 'team' ? 'selected' : '') + '>Roster</option><option value="support" ' + (role === 'support' ? 'selected' : '') + '>Support</option><option value="none" ' + (role === 'none' ? 'selected' : '') + '>Not on team</option></select></div>'; }).join('') + '</div>' +
       '<div class="row"><button class="btn" onclick="app.addGlobalPlayerToActiveTeam(\'' + gp.id + '\')">Add to ' + escapeHtml(activeTeam().name || 'team') + '</button><button class="btn secondary" onclick="app.closePlayerProfile(); app.go(\'team\');">Open Team section</button>' + (canDelete ? '<button class="btn danger" onclick="app.deleteGlobalPlayer(\'' + gp.id + '\')">Delete permanently</button>' : '<span class="subtext delete-note">To delete permanently, remove from all teams first.</span>') + '</div></div></div>';
@@ -3022,6 +3377,7 @@
     setActiveTeam: function (teamId) { var tm = teamById(teamId); if (!tm) return; state.activeTeamId = tm.id; state.activeTournamentId = preferredTournamentId() || (teamTournaments(tm.id)[0] && teamTournaments(tm.id)[0].id); var m = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null; state.activeMatchId = m && m.id; state.lastPlanMatchId = null; state.view = 'home'; save(); render(); },
     updateTeam: function (field, value) { var tm = activeTeam(); if (!tm) return; if (field === 'name') { tm.name = value || tm.name; data.tournaments.filter(function (t) { return t.teamId === tm.id; }).forEach(function (t) { t.teamName = tm.name; }); } else if (field === 'color') { tm.color = normalizeHexColor(value, tm.color || '#1769ff'); tm.colorName = tm.color === '#0b5d3b' ? 'Forest Green' : tm.color === '#1769ff' ? 'Blue' : tm.colorName; } tm.updatedAt = nowIso(); save(); render(); },
     createTeamPrompt: function () { var activeCount = activeTeams().length; if (activeCount >= 5) return toast('V5 UI supports up to 5 active teams in the switcher.'); var name = prompt('New team name'); if (!name) return; var color = prompt('Team color hex', '#1769ff') || '#1769ff'; var id = uid('team'); data.teams.push({ id: id, name: prettyName(name), color: normalizeHexColor(color, '#1769ff'), colorName: '', active: true, createdAt: nowIso(), updatedAt: nowIso() }); (data.globalPlayers || []).forEach(function (gp) { ensureTeamPlayer(id, gp.id, 'support', gp.defaultSkills || defaultSkills()); }); state.activeTeamId = id; state.activeTournamentId = null; state.activeMatchId = null; save(); render(); toast('Team created. Existing players were added as Support by default.'); },
+    deleteActiveTeamPrompt: function () { var tm = activeTeam(); if (!tm) return; var remaining = activeTeams().filter(function (x) { return x.id !== tm.id; }); if (!remaining.length) return toast('Create or select another team before deleting this one.'); var msg = 'Delete ' + tm.name + '?\n\nThis will remove the team and release all players from this team. Player profiles will not be deleted. Team tournaments, matches, and saved plans for this team will be removed.'; if (!confirm(msg)) return; var typed = prompt('Type the team name to confirm deletion:', ''); if (typed !== tm.name) return toast('Team deletion cancelled.'); var tournamentIds = data.tournaments.filter(function (t) { return t.teamId === tm.id; }).map(function (t) { return t.id; }); var matchIds = data.matches.filter(function (m) { return tournamentIds.indexOf(m.tournamentId) >= 0; }).map(function (m) { return m.id; }); data.teamPlayers = data.teamPlayers.filter(function (tp) { return tp.teamId !== tm.id; }); data.tournamentPlayers = data.tournamentPlayers.filter(function (tp) { return tp.teamId !== tm.id && tournamentIds.indexOf(tp.tournamentId) < 0; }); data.matchPlayers = data.matchPlayers.filter(function (mp) { return matchIds.indexOf(mp.matchId) < 0; }); data.matches = data.matches.filter(function (m) { return matchIds.indexOf(m.id) < 0; }); data.tournaments = data.tournaments.filter(function (t) { return t.teamId !== tm.id; }); data.teams = data.teams.filter(function (x) { return x.id !== tm.id; }); state.activeTeamId = remaining[0].id; state.activeTournamentId = (teamTournaments(state.activeTeamId)[0] || {}).id || null; state.activeMatchId = state.activeTournamentId ? (nextMatch(state.activeTournamentId) || {}).id || null : null; state.lastPlanMatchId = null; state.view = 'home'; save(); render(); toast(tm.name + ' deleted. Player profiles were kept.'); },
     openTournamentPanel: function () { state.tournamentPanelOpen = true; render(); },
     closeTournamentPanel: function () { state.tournamentPanelOpen = false; render(); },
     openPlayerProfile: function (gpId) { if (!gpId) return; state.profilePlayerId = gpId; render(); },
@@ -3031,7 +3387,7 @@
     addExistingPlayerToTeamPrompt: function () { var q = prompt('Search existing player name'); if (!q) return; var n = normalizeAlias(q); var matches = data.globalPlayers.filter(function (gp) { return gp.normalizedName.indexOf(n) >= 0 || n.indexOf(gp.normalizedName) >= 0 || (gp.aliases || []).some(function (a) { return normalizeAlias(a).indexOf(n) >= 0; }); }); if (!matches.length) return toast('No existing player found. Use Add player to create a new one.'); this.addGlobalPlayerToActiveTeam(matches[0].id); },
     updateTeamMembership: function (teamPlayerId, membership) { var row = data.teamPlayers.find(function (tp) { return tp.id === teamPlayerId; }); if (!row) return; setGlobalMembership(row.globalPlayerId, row.teamId, membership === 'team' ? 'team' : 'support'); save(); render(); },
     updateGlobalMembership: function (gpId, teamId, membership) { setGlobalMembership(gpId, teamId, membership); save(); render(); toast('Membership updated.'); },
-    updateGlobalPlayerField: function (gpId, field, value) { var gp = globalPlayer(gpId); if (!gp) return; if (field === 'soccerExperience') gp.soccerExperience = value || 'lifelong'; if (field === 'runningCapacity') gp.runningCapacity = value || 'm45'; gp.updatedAt = nowIso(); save(); render(); },
+    updateGlobalPlayerField: function (gpId, field, value) { var gp = globalPlayer(gpId); if (!gp) return; if (field === 'email') { gp.emails = Array.isArray(gp.emails) ? gp.emails : []; gp.email = normalizeEmail(value); if (gp.email && gp.emails.indexOf(gp.email) < 0) gp.emails.unshift(gp.email); } else if (field === 'soccerExperience') gp.soccerExperience = value || 'lifelong'; else if (field === 'runningCapacity') gp.runningCapacity = value || 'm45'; else gp[field] = value; gp.updatedAt = nowIso(); save(); render(); },
     uploadTeamBackground: function () { var tm = activeTeam(); var input = document.getElementById('teamBackgroundUpload'); var file = input && input.files && input.files[0]; if (!tm || !file) return toast('Choose a background image first.'); if (!/^image\//.test(file.type || '')) return toast('Please upload an image file.'); var reader = new FileReader(); reader.onload = function () { tm.backgroundDataUrl = reader.result; tm.backgroundSrc = ''; tm.updatedAt = nowIso(); save(); render(); toast('Team background updated.'); }; reader.readAsDataURL(file); },
     clearTeamBackground: function () { var tm = activeTeam(); if (!tm) return; tm.backgroundDataUrl = ''; tm.backgroundSrc = tm.id === 'team_intuit_united' ? 'assets/team-backgrounds/intuit-united-blue.png' : 'assets/soccer-background.png'; tm.updatedAt = nowIso(); save(); render(); toast('Team background reset.'); },
     deleteGlobalPlayer: function (gpId) { var gp = globalPlayer(gpId); if (!gp) return; if (teamPlayersForGlobal(gpId).length) return toast('Remove this player from all teams before deleting permanently.'); var typed = prompt('Delete permanently. Type the player name to confirm:', ''); if (typed !== gp.name) return toast('Delete cancelled.'); data.globalPlayers = data.globalPlayers.filter(function (p) { return p.id !== gpId; }); data.teamPlayers = data.teamPlayers.filter(function (p) { return p.globalPlayerId !== gpId; }); data.tournamentPlayers = data.tournamentPlayers.filter(function (p) { return p.globalPlayerId !== gpId; }); data.matchPlayers = data.matchPlayers.filter(function (p) { return p.globalPlayerId !== gpId; }); state.profilePlayerId = null; save(); render(); toast('Player deleted permanently.'); },
@@ -3152,6 +3508,10 @@
     downloadShareImage: function (matchId) { shareCardBlob(function (blob) { if (!blob) return toast('Could not create image.'); var url = URL.createObjectURL(blob); var a = document.createElement('a'); a.href = url; a.download = 'match-planner-card.png'; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function () { URL.revokeObjectURL(url); }, 2000); toast('Image downloaded.'); }); },
     openShareImage: function (matchId) { var opened = window.open('', '_blank'); shareCardBlob(function (blob) { if (!blob) { if (opened) opened.close(); return toast('Could not create image.'); } var url = URL.createObjectURL(blob); if (opened) { opened.location.href = url; opened.document.title = 'Match plan image'; toast('Image opened.'); } else toast('Popup blocked. Use Download image instead.'); setTimeout(function () { URL.revokeObjectURL(url); }, 60000); }); },
     copyShareImage: function (matchId) { if (!navigator.clipboard || !window.ClipboardItem) return toast('Clipboard image copy is not supported in this browser.'); shareCardBlob(function (blob) { if (!blob) return toast('Could not create image.'); navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(function () { toast('Image copied to clipboard.'); }).catch(function () { toast('Could not copy image to clipboard.'); }); }); },
+    previewRosterCsvImport: function (input) { var file = input && input.files && input.files[0]; if (!file) return; var teamId = activeTeam().id; var reader = new FileReader(); reader.onload = function () { state.bulkRosterPreview = buildRosterCsvPreview(reader.result, teamId); render(); }; reader.readAsText(file); input.value = ''; },
+    cancelRosterCsvImport: function () { state.bulkRosterPreview = null; render(); },
+    applyRosterCsvImport: function () { var preview = state.bulkRosterPreview; if (!preview || !preview.rows || !preview.rows.length) return toast('No CSV rows to import.'); var teamId = preview.teamId || activeTeam().id; var targetTeam = teamById(teamId) || activeTeam(); var activeTeamIds = activeTeams().map(function (tm) { return tm.id; }); var applied = 0; preview.rows.forEach(function (row) { if (row.warning && row.warning.indexOf('Missing') >= 0) return; var gp = row.matchId ? globalPlayer(row.matchId) : null; if (!gp) { gp = { id: uid('gp'), name: titleCaseMinor(row.name), normalizedName: normalizeAlias(row.name), aliases: [], avatarId: row.avatarId || 'avatar-07', defaultSkills: normalizeSkills(row.skills), soccerExperience: row.experience || 'lifelong', runningCapacity: row.running || 'm45', email: '', emails: [], createdAt: nowIso(), updatedAt: nowIso() }; data.globalPlayers.push(gp); } else { gp.name = titleCaseMinor(row.name || gp.name); gp.normalizedName = normalizeAlias(gp.name); gp.avatarId = row.avatarId || gp.avatarId; gp.defaultSkills = normalizeSkills(row.skills || gp.defaultSkills); gp.soccerExperience = row.experience || gp.soccerExperience || 'lifelong'; gp.runningCapacity = row.running || gp.runningCapacity || 'm45'; gp.updatedAt = nowIso(); }
+      (row.emails && row.emails.length ? row.emails : [row.email]).forEach(function (e) { addEmailToPlayer(gp, e); }); var skills = normalizeSkills(row.skills || gp.defaultSkills); gp.defaultSkills = skills; activeTeamIds.forEach(function (id) { var role = id === teamId ? 'team' : 'support'; var existing = teamPlayer(id, gp.id); if (existing && existing.membership === 'team' && role === 'support') role = 'team'; var membership = ensureTeamPlayer(id, gp.id, role, skills); membership.skills = skills; data.tournaments.filter(function (t) { return t.teamId === id; }).forEach(function (t) { ensureTournamentPlayerFromTeam(t.id, membership); }); }); applied++; }); state.bulkRosterPreview = null; save(); render(); toast(applied + ' players imported to ' + (targetTeam.name || 'team') + '.'); },
     exportData: function () { var backup = { exportFormat: 'captain-match-planner-local-snapshot', appVersion: APP_VERSION, schemaVersion: DB_SCHEMA_VERSION, storageBackend: state.storageBackend, exportedAt: nowIso(), data: clone(data) }; var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }); var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'captain-match-planner-v' + APP_VERSION.replace(/\./g, '_') + '-backup.json'; a.click(); URL.revokeObjectURL(a.href); },
     importDataPrompt: function () { var input = document.createElement('input'); input.type = 'file'; input.accept = '.json,application/json'; input.onchange = function () { var file = input.files[0]; if (!file) return; var reader = new FileReader(); reader.onload = function () { try { var parsed = JSON.parse(reader.result); var incoming = parsed && parsed.data && parsed.exportFormat ? parsed.data : parsed; data = migrateData(incoming); state.activeTeamId = preferredTeamId(); data.tournaments.forEach(function (t) { reconcileTournamentSchedule(t.id); }); state.activeTournamentId = preferredTournamentId() || (teamTournaments(state.activeTeamId)[0] && teamTournaments(state.activeTeamId)[0].id) || (data.tournaments[0] && data.tournaments[0].id); var importedNext = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null; state.activeMatchId = importedNext ? importedNext.id : (data.matches[0] && data.matches[0].id); save().then(function () { render(); toast('Data imported into local database.'); }); } catch (e) { alert('Invalid JSON backup.'); } }; reader.readAsText(file); }; input.click(); }
   };

@@ -1,88 +1,89 @@
-# Captain Match Planner v5.1
+# Captain Match Planner v6.01
 
-Installable local-first PWA for 7v7 soccer match planning.
+Installable local-first PWA for multi-team 7v7 soccer match planning.
 
-## What changed in v5.1
+## What changed in v6.01
 
-v5.1 refines the V5 multi-team foundation with team branding, clearer membership management, better shared-player flows, and richer player profiles.
+### Baseline teams and roster
 
-### Team identity and branding
+- Keeps the current Green FC baseline.
+- Adds the second baseline team as **Intuit United FC**.
+- Intuit United FC uses the existing blue team branding/background and plays on Wednesdays.
+- Adds an Intuit United FC tournament starting **Wednesday, July 22, 2026**.
+- Seeds 8 Wednesday matches:
+  - July 22, July 29, August 5, August 12, August 19, August 26, September 3, September 10.
+- Imports the Intuit United FC survey roster as roster players.
+- Jose, Franco/Franco Duarte, Nisanth/Nishanth, and Fernando/Fernando Mendoza are matched as shared roster players across Green FC and Intuit United FC.
+- Miguel and Migu Malla remain separate players.
+- Player names from the roster are lightly normalized with starting capitals only.
+- Emails are stored on global player profiles for future iterations.
 
-- Added team-aware app coloring using the selected team's color.
-- Green FC defaults to Forest Green.
-- Intuit United defaults to Blue.
-- Intuit United uses the provided blue-team match background image.
-- Each team can now upload a custom background image from the Team page.
-- Team background images are stored locally and included in export/import backups.
-- Team color selection now shows a clearer color preview and quick swatches.
-- Team creation is now positioned as a Home-page management action instead of a frequent top-bar action.
+### Survey mapping
 
-### Team page membership model
+Position answer mapping:
 
-- Replaced the visible Shared Player Pool section with a clearer selected-team structure:
-  - Roster players
-  - Support players
-  - Players not in this team
-- A player's row still shows cross-team membership pills, for example:
-  - Green FC · Roster
-  - Intuit United · Support
-- Players not in the selected team can be added quickly as Support or Roster.
-- Fixed membership visibility so a player with an Intuit United support badge appears in the Intuit United support section.
+- `This is a great position for me` = 5 stars.
+- `I am good here` = 4 stars.
+- `I can play if needed` = 2 stars.
+- `I not good here` = 1 star.
 
-### Shared-player behavior
+Player background mapping:
 
-- Search/replacement flows now use the full global player pool.
-- If an existing player is selected for a match but is not part of that team, the app automatically adds them as Support for that team.
-- New players default to Support across all active teams.
-- New-player creation opens the player profile so team-by-team membership can be adjusted immediately.
-- Player profile membership controls now show all active teams with Roster / Support / Not on team options.
+- `less than 5 years` = Less than 5 years.
+- `between 5 to 10 years` = 5 to 10 years.
+- `Since I was a kid` = All my life.
+- `15 min non stop` = 15 min.
+- `30 min non stop` = 30 min.
+- `45 min non stop` = 45 min.
+- `More than 45 min` = 45+ min.
 
-### Player profile enhancements
+When a player has more than three strong 4/5 positions, the app keeps the best/scarcest three and downgrades extra strong roles to 3.
 
-- Added two global player attributes:
-  - Soccer experience: Less than 5 years, 5 to 10 years, All my life.
-  - Running capacity: Not much, 15 min, 30 min, 45 min, 45+ min.
-- Existing players default to:
-  - Soccer experience: All my life.
-  - Running capacity: 45 min.
-- These fields are shown as visual player-background chips and editable from the profile drawer.
-- Jose defaults to Avatar 25.
-- Baseline male players avoid Avatar 01 through Avatar 06.
-- Fixed avatar picker layering so selecting an avatar from the player profile is not greyed out.
+### CSV roster import
 
-### Delete and navigation fixes
+- Adds a **Bulk CSV** action in the Team page.
+- CSV import applies to the currently selected team.
+- The validation preview shows rows found, matched players, new players, and warnings.
+- Matching priority:
+  1. Email match.
+  2. Exact name / alias match.
+  3. Similar-name recommendation.
+  4. Create new player.
+- Matched existing players can update email, avatar, skills, soccer experience, and running capacity after the review step.
+- Imported CSV players become roster players for the selected team and support players on other active teams unless they already have a roster role there.
 
-- The first remove-player dialog now clarifies that permanent deletion requires removing the player from all teams first.
-- A protected Delete permanently option appears only when a global player has no active team memberships.
-- The Back to matches button from match planning now returns to the matches overview instead of reopening the same plan.
-- The session still remembers the last match-planning view when the user navigates back to Matches normally.
+### Duplicate avatars
 
-### Intuit United defaults
+- Duplicate avatars are allowed.
+- When two or more players share the same avatar, the app adds a distinct avatar border color per player to make them easier to identify.
+- The border appears on team rows, profile views, match planning, and Plan Highlights.
 
-- Default Intuit United tournament starts on July 22, 2026.
-- Existing Green FC support players remain available as support for Intuit United.
+### Match planning expectation
+
+- Intuit United FC starts with a larger roster and is expected to use heavier rotations.
+- Heavy rotation remains the preferred pattern for high-bench matches.
 
 ## Data migration
 
-When opening v5.1 over an existing v5.0 or v4.05 local database, the app updates teams, team memberships, player defaults, and background settings automatically.
+Opening v6.01 over an existing v5.2/v5.1/v5.0/v4.05 local database upgrades the local data model and adds the Intuit United FC baseline if it is missing.
 
 Recommended before deployment: export a backup from the live app.
 
 ## Deployment strategy
 
-v5.1 is intended as an update over v5.0 using the same GitHub Pages URL and the same local IndexedDB database name. Existing local data should remain available after migration.
+v6.01 is intended as an update over the existing GitHub Pages app using the same repo and URL.
 
 ## Local test
 
 ```bash
-cd captain-match-planner-v5_1-local
-python3 -m http.server 5174
+cd captain-match-planner-v6_01-local
+python3 -m http.server 5176
 ```
 
 Open:
 
 ```text
-http://localhost:5174
+http://localhost:5176
 ```
 
 ## GitHub Pages deployment
@@ -94,23 +95,15 @@ cd ~/Documents/GitHub/captain-match-repo-v4
 
 git checkout main
 git pull
-git checkout -b update-v5-1
+git checkout -b update-v6-01
 
-# Copy the contents of captain-match-planner-v5_1-local into this repo folder.
+# Copy the contents of captain-match-planner-v6_01-local into this repo folder.
 # Keep the .git folder.
 
 git status
 git add .
-git commit -m "Update Captain Match Planner to v5.1"
-git push origin update-v5-1
+git commit -m "Update Captain Match Planner to v6.01"
+git push origin update-v6-01
 ```
 
-Then merge to main:
-
-```bash
-git checkout main
-git merge update-v5-1
-git push origin main
-```
-
-After GitHub Pages deploys, open the live URL and confirm Home shows **App v5.1**. If the installed PWA still shows an older version, close/reopen the app or refresh once so the new service worker cache takes over.
+Then merge to main and push.
