@@ -1,5 +1,5 @@
 /* Coach Planner PWA service worker */
-const CACHE_NAME = 'coach-planner-v7-03-schedule-cloud-cache';
+const CACHE_NAME = 'coach-planner-v7-04-schedule-cloud-cache';
 const CORE_ASSETS = [
   './',
   './index.html',

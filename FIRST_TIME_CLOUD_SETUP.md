@@ -1,47 +1,33 @@
-# First-time cloud setup for Coach Planner v7.03
+# Cloud access guide for Coach Planner v7.04
 
-This package is already pointed at the validated Supabase function:
+## For team members
 
-```text
-https://wfuxkbigfrmfjvkoxepb.supabase.co/functions/v1/coach-planner-snapshot
-```
+Use this flow when someone sends you the app link and the workspace password.
 
-No secrets or tokens are included in the app.
+1. Open the app link.
+2. Open **Coach Planner Cloud** / **Load the latest plan**.
+3. Choose **Access Existing Workspace**.
+4. Enter the workspace code shared by the organizer. The default is `coach-planner`.
+5. Enter the shared workspace password.
+6. After it connects, click **Refresh latest plan**.
+7. Select the team and match to view the saved lineup and rotation plan.
 
-## First device
+If you make edits, click **Save plan** where available, then **Save my changes to Cloud** so the rest of the team can see the update.
 
-Use the device that currently has the best/latest local app data.
+## Admin setup / first upload
 
-1. Deploy v7.03 to GitHub Pages.
-2. Open the app.
-3. Export a local backup.
+Use this only once, from the device that has the best/current local data.
+
+1. Deploy v7.04 to GitHub Pages.
+2. Open the app on the device with the latest roster, tournament, match details, and plans.
+3. Export a backup first.
 4. Open **Coach Planner Cloud**.
 5. Use workspace code `coach-planner`.
-6. Choose a shared workspace password.
-7. Click **Create New Workspace**.
-8. Click **Save local changes to cloud**.
+6. Enter the shared password you want the team to use.
+7. Expand **Admin setup / first upload** and choose **Admin: Create Workspace**.
+8. After the workspace connects, choose **Save my changes to Cloud**.
+9. Share the app link, workspace code, and password with the team.
 
-## Other devices
+## Existing Supabase setup
 
-1. Open the same app URL.
-2. Open **Coach Planner Cloud**.
-3. Use workspace code `coach-planner`.
-4. Enter the same shared password.
-5. Click **Access Existing Workspace**.
-6. Confirm the cloud data loads.
-
-## Normal usage
-
-- Use **Refresh from Cloud** before editing on a second device.
-- Use **Save to Cloud** after meaningful edits.
-- Local edits save immediately on each device, but other devices only see them after Save to Cloud.
-
-
-## Saving match plans
-
-After you build or auto-generate a lineup/substitution plan, the plan is saved locally automatically. Use **Save to Cloud** when you want the same saved plan to appear on another device.
-
-
-## Match detail persistence
-
-When editing match date, time, opponent, or field/location, click **Save to Cloud** after the change. v7.03 flushes any active input before saving and stores those values in the cloud snapshot.
+No Supabase data structure changes are required for v7.04. It continues using the existing `workspaces` and `app_snapshots` tables and the validated `coach-planner-snapshot` Edge Function.

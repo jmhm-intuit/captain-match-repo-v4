@@ -1771,7 +1771,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
   .cloud-actions .btn, .cloud-actions button { flex: 1 1 140px; }
 }
 
-/* v7.03: persistent match details + more visible team/background identity */
+/* persistent match details + visible team/background identity */
 .app-shell::before {
   background:
     linear-gradient(180deg, rgba(255,255,255,.72), rgba(247,251,255,.88)),
@@ -1810,4 +1810,149 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .remaining-row em:empty { display:none; }
 @media (max-width: 560px) {
   .home-hero > div:not(.home-count) { padding:10px; }
+}
+
+
+/* v7.04: goal-centered home background, clearer team identity, user-first cloud help, and assigned-position stars */
+body {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.30), rgba(242,247,255,.86)),
+    url('../assets/team-backgrounds/home-match-field.png') center 72% / cover fixed no-repeat !important;
+}
+.app-shell::before {
+  opacity: 1;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.38), rgba(247,251,255,.74)),
+    radial-gradient(circle at 12% 10%, rgba(255,255,255,.40), transparent 16rem),
+    linear-gradient(135deg, color-mix(in srgb, var(--team-color, #1769ff) 38%, transparent), transparent 46%),
+    var(--team-bg-image, url('../assets/team-backgrounds/home-match-field.png')) center 72% / cover no-repeat !important;
+}
+.app-shell::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--team-color, #1769ff) 16%, transparent), transparent 34%, color-mix(in srgb, var(--team-color, #1769ff) 12%, transparent)),
+    radial-gradient(circle at 50% 70%, rgba(255,255,255,.12), transparent 30rem);
+}
+.home-hero {
+  min-height: 315px !important;
+  background:
+    linear-gradient(90deg, rgba(5,20,48,.66), rgba(5,52,100,.20) 50%, rgba(5,20,48,.28)),
+    linear-gradient(135deg, color-mix(in srgb, var(--team-color, #1769ff) 45%, transparent), transparent 55%),
+    var(--team-bg-image, url('../assets/team-backgrounds/home-match-field.png')) center 72% / cover no-repeat !important;
+  border-color: color-mix(in srgb, var(--team-color, #1769ff) 70%, #ffffff) !important;
+  box-shadow: 0 26px 70px rgba(16,33,63,.28), inset 0 0 0 1px rgba(255,255,255,.20) !important;
+}
+.home-hero > div:not(.home-count) {
+  background: linear-gradient(135deg, rgba(5,20,48,.42), rgba(5,20,48,.16)) !important;
+  border-color: rgba(255,255,255,.28) !important;
+  box-shadow: 0 18px 46px rgba(0,0,0,.14);
+}
+.home-count {
+  background: linear-gradient(135deg, rgba(4,20,48,.58), color-mix(in srgb, var(--team-color, #1769ff) 52%, rgba(4,20,48,.42))) !important;
+}
+.team-bg-preview {
+  position: relative;
+  overflow: hidden;
+  min-height: 240px !important;
+  background-size: cover !important;
+  background-position: center 72% !important;
+  border: 2px solid color-mix(in srgb, var(--team-color, #1769ff) 70%, #ffffff) !important;
+  box-shadow: inset 0 -70px 110px color-mix(in srgb, var(--team-color, #1769ff) 28%, rgba(16,33,63,.18)), 0 18px 42px rgba(16,33,63,.16) !important;
+}
+.team-bg-preview::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, transparent 35%, rgba(5,20,48,.18)),
+    linear-gradient(135deg, color-mix(in srgb, var(--team-color, #1769ff) 24%, transparent), transparent 55%);
+}
+.card {
+  background: rgba(255,255,255,.88);
+  backdrop-filter: blur(4px);
+}
+.cloud-card { background: linear-gradient(135deg, rgba(255,255,255,.92), rgba(239,247,255,.82)); }
+.cloud-user-guide {
+  margin-top: 14px;
+  padding: 16px 18px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(239,246,255,.96), rgba(255,255,255,.92));
+  border: 1px solid rgba(29,99,232,.16);
+}
+.cloud-user-guide h3 { margin: 0 0 8px; color: #112b54; }
+.cloud-user-guide ol { margin: 0; padding-left: 20px; color: #3f4f69; font-weight: 800; }
+.admin-setup-details {
+  margin-top: 14px;
+  border: 1px dashed rgba(17,43,84,.22);
+  border-radius: 18px;
+  padding: 12px 14px;
+  background: rgba(255,255,255,.72);
+}
+.admin-setup-details summary { cursor: pointer; font-weight: 1000; color: #334155; }
+.admin-setup-details ol { color: #53627a; font-weight: 750; }
+.position-slot .pos {
+  display: inline-flex !important;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  max-width: 96px;
+}
+.position-slot .pos em,
+.share-slot .label em,
+.position-chip em,
+.mini-person small,
+.sub-arrow small {
+  font-style: normal;
+  font-weight: 1000;
+  letter-spacing: .01em;
+}
+.position-slot .pos em {
+  color: #fff7c2;
+  font-size: 10px;
+}
+.position-chip {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+}
+.position-chip em {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.78);
+  color: #0f2a57;
+  font-size: 11px;
+}
+.poster-sub-row .mini-person small,
+.sub-arrow small {
+  display: inline-block;
+  margin-top: 2px;
+  color: #0f2a57;
+  background: rgba(255,255,255,.78);
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+}
+.sub-arrow {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+.share-field .share-slot .label,
+.compact-field .share-slot .label,
+.poster-field-card .share-field .share-slot .label {
+  max-width: 116px;
+  white-space: normal;
+  line-height: 1.1;
+}
+@media (max-width: 560px) {
+  .home-hero { min-height: 235px !important; background-position: center 74% !important; }
+  .team-bg-preview { min-height: 190px !important; background-position: center 74% !important; }
+  .position-slot .pos em { font-size: 8px; }
 }

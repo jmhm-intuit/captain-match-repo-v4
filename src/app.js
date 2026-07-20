@@ -3,7 +3,7 @@
   var DB_NAME = "captain_match_planner_local_db";
   var DB_VERSION = 4;
   var DB_SCHEMA_VERSION = 10;
-  var APP_VERSION = "7.03";
+  var APP_VERSION = "7.04";
   var POS_KEYS = ["forward", "wing", "center", "defense", "goalie"];
   var POS_SHORT = { forward: "FWD", wing: "WNG", center: "CTR", defense: "DEF", goalie: "GK" };
   var POS_FULL = { forward: "Forward", wing: "Wing", center: "Center", defense: "Defense", goalie: "Goalie" };
@@ -612,7 +612,7 @@
   function ensureTeamPlayer(teamId, globalPlayerId, membership, skills) { if (!teamId || !globalPlayerId) return null; var existing = data.teamPlayers.find(function (tp) { return tp.teamId === teamId && tp.globalPlayerId === globalPlayerId; }); if (existing) { existing.active = true; if (membership) existing.membership = membership; if (skills && !existing.skills) existing.skills = clone(skills); existing.updatedAt = nowIso(); return existing; } var row = { id: uid('team_player'), teamId: teamId, globalPlayerId: globalPlayerId, membership: membership || 'support', skills: clone(skills || (globalPlayer(globalPlayerId) && globalPlayer(globalPlayerId).defaultSkills) || defaultSkills()), active: true, createdAt: nowIso(), updatedAt: nowIso() }; data.teamPlayers.push(row); return row; }
   function ensureTournamentPlayerFromTeam(tId, teamPlayerRow) { var t = data.tournaments.find(function (x) { return x.id === tId; }); if (!t || !teamPlayerRow || teamPlayerRow.active === false) return null; var existing = data.tournamentPlayers.find(function (tp) { return tp.tournamentId === tId && tp.globalPlayerId === teamPlayerRow.globalPlayerId; }); var skills = clone(teamPlayerRow.skills || (globalPlayer(teamPlayerRow.globalPlayerId) && globalPlayer(teamPlayerRow.globalPlayerId).defaultSkills) || defaultSkills()); if (existing) { existing.active = true; existing.membership = teamPlayerRow.membership || existing.membership; existing.skills = normalizeSkills(existing.skills || skills); existing.teamId = t.teamId; return existing; } var tpId = uid('tp'); var pos = derivePositions(skills, tId, tpId); var gp = globalPlayer(teamPlayerRow.globalPlayerId); var tp = { id: tpId, teamId: t.teamId, tournamentId: tId, globalPlayerId: teamPlayerRow.globalPlayerId, membership: teamPlayerRow.membership || 'support', skills: skills, primaryPosition: pos.primary, secondaryPosition: pos.secondary, goalieEligible: skills.goalie >= 3, tournamentGoalie: gp && /franco/i.test(gp.name) && skills.goalie >= 3, active: true, createdAt: nowIso(), updatedAt: nowIso() }; data.tournamentPlayers.push(tp); return tp; }
   function activeTeams() { return (data.teams || []).filter(function (tm) { return tm.active !== false; }).slice(0, 5); }
-  function teamBackground(team) { return (team && (team.backgroundDataUrl || team.backgroundSrc)) || ''; }
+  function teamBackground(team) { return (team && team.backgroundDataUrl) || defaultTeamBackground(); }
   function defaultTeamBackground() { return 'assets/team-backgrounds/home-match-field.png'; }
   function normalizeHexColor(color, fallback) { color = String(color || '').trim(); if (/^#[0-9a-f]{6}$/i.test(color)) return color; return fallback || '#1769ff'; }
   function hexToRgb(color) { color = normalizeHexColor(color, '#1769ff').replace('#',''); return { r: parseInt(color.slice(0,2),16), g: parseInt(color.slice(2,4),16), b: parseInt(color.slice(4,6),16) }; }
@@ -1533,6 +1533,21 @@
     if (role === "forward") return Number(s.forward || 0);
     return 0;
   }
+  function assignedRoleForPosition(match, position) {
+    return roleForPosition(position, match && match.formation);
+  }
+  function assignedStarsValue(match, mpOrCtx, position) {
+    if (!mpOrCtx || !position) return 0;
+    var ctx = mpOrCtx.matchId ? playerContext(mpOrCtx) : mpOrCtx;
+    return Math.max(0, Math.min(5, Math.round(roleSkill(ctx, assignedRoleForPosition(match, position)))));
+  }
+  function starsText(value) {
+    value = Math.max(0, Math.min(5, Math.round(Number(value || 0))));
+    return value + '★';
+  }
+  function assignedStarsText(match, mpOrCtx, position) {
+    return starsText(assignedStarsValue(match, mpOrCtx, position));
+  }
   function bestRosterSkillForSlot(peers, slot) {
     var best = 0;
     (peers || []).forEach(function (p) {
@@ -1760,13 +1775,15 @@
     var targetPos = sub.position || outPos || 'POS';
     return sub.manualPosition && outPos && targetPos !== outPos ? targetPos + ' ↔ ' + outPos : targetPos;
   }
-  function positionOverrideOptions(match, sub) {
+    function positionOverrideOptions(match, sub) {
     var before = lineupBeforeWindow(match, sub.windowId);
     var selected = sub.position || positionOfPlayer(before, sub.playerOutId) || '';
+    var inMp = sub.playerInId ? data.matchPlayers.find(function (p) { return p.id === sub.playerInId; }) : null;
     return (FORMATIONS[match.formation] || FORMATIONS['2-3-1']).map(function (slot) {
       var mp = before[slot.position] ? data.matchPlayers.find(function (p) { return p.id === before[slot.position]; }) : null;
       var name = mp ? playerContext(mp).name.split(' ')[0] : 'empty';
-      var label = slot.position + ' · ' + name;
+      var star = inMp ? ' · ' + assignedStarsText(match, inMp, slot.position) : '';
+      var label = slot.position + star + ' · ' + name;
       return '<option value="' + slot.position + '" ' + (slot.position === selected ? 'selected' : '') + '>' + escapeHtml(label) + '</option>';
     }).join('');
   }
@@ -2541,25 +2558,25 @@
     var details = state.cloud.mode === 'connected' ? state.cloud.workspaceSlug : 'not connected';
     return '<button class="cloud-status-pill ' + cls + '" onclick="app.openCloudPanel()"><span>Cloud</span><strong>' + escapeHtml(cloudStatusText()) + '</strong><small>' + escapeHtml(details) + '</small></button>';
   }
-  function renderCloudWorkspacePanel(compact) {
+    function renderCloudWorkspacePanel(compact) {
     var cfg = cloudConfig();
     var configured = cloudConfigured();
     var connected = state.cloud.mode === 'connected';
-    var status = connected ? (state.cloud.dirty ? 'Unsaved cloud changes' : 'Connected to ' + state.cloud.workspaceSlug) : 'Local-only mode';
-    var setupNote = configured ? '' : '<div class="cloud-warning"><strong>Cloud function URL missing.</strong><span>Set window.COACH_PLANNER_CLOUD.functionUrl in cloud-config.js after deploying the Supabase Edge Function.</span></div>';
-    return '<div class="card cloud-card ' + (compact ? 'compact' : '') + '"><div class="row space"><div><div class="eyebrow">Shared workspace</div><h2>Coach Planner Cloud</h2><div class="subtext">' + escapeHtml(status) + '. Local data still saves on this device immediately.</div></div>' + renderCloudStatusPill() + '</div>' + setupNote +
-      (connected ? '<div class="cloud-actions"><button class="btn" onclick="app.saveToCloud()">Save to Cloud</button><button class="btn secondary" onclick="app.refreshFromCloud()">Refresh from Cloud</button><button class="btn ghost" onclick="app.openCloudPanel()">Cloud settings</button></div><div class="subtext tight">Last cloud save: ' + escapeHtml(formatDateTime(state.cloud.lastSavedAt || state.cloud.remoteUpdatedAt)) + '. Last local save: ' + escapeHtml(formatDateTime(state.lastSavedAt)) + '.</div>' : '<div class="cloud-actions"><button class="btn" onclick="app.openCloudPanel()">Access Shared Workspace</button><button class="btn secondary" onclick="app.openCloudPanel()">Create Workspace</button></div><div class="subtext tight">Use workspace code <b>' + escapeHtml(cfg.defaultWorkspaceSlug || CLOUD_DEFAULT_WORKSPACE) + '</b> when setting up the first shared database.</div>') +
+    var status = connected ? (state.cloud.dirty ? 'Unsaved cloud changes' : 'Connected to ' + state.cloud.workspaceSlug) : 'Not connected yet';
+    var setupNote = configured ? '' : '<div class="cloud-warning"><strong>Cloud not configured.</strong><span>The app will keep working locally. Ask the organizer/admin to configure cloud access.</span></div>';
+    return '<div class="card cloud-card ' + (compact ? 'compact' : '') + '"><div class="row space"><div><div class="eyebrow">Shared team plan</div><h2>Load the latest plan</h2><div class="subtext">' + escapeHtml(status) + '. Access the shared workspace, refresh the latest match plan, or save your edits.</div></div>' + renderCloudStatusPill() + '</div>' + setupNote +
+      (connected ? '<div class="cloud-actions"><button class="btn secondary" onclick="app.refreshFromCloud()">Refresh latest plan</button><button class="btn" onclick="app.saveToCloud()">Save my changes to Cloud</button><button class="btn ghost" onclick="app.openCloudPanel()">Workspace help</button></div><div class="subtext tight">Last cloud save: ' + escapeHtml(formatDateTime(state.cloud.lastSavedAt || state.cloud.remoteUpdatedAt)) + '. Last local save: ' + escapeHtml(formatDateTime(state.lastSavedAt)) + '.</div>' : '<div class="cloud-actions"><button class="btn" onclick="app.openCloudPanel()">Access Shared Workspace</button></div><div class="subtext tight">Use the workspace code and password shared by the organizer.</div>') +
       '</div>';
   }
-  function renderCloudModal() {
+    function renderCloudModal() {
     if (!state.cloudPanelOpen) return '';
     var cfg = cloudConfig();
     var connected = state.cloud.mode === 'connected';
-    return '<div class="overlay" onclick="app.closeCloudPanel()"><div class="modal cloud-modal" onclick="event.stopPropagation()"><div class="row space"><div><div class="eyebrow">Cloud snapshot MVP</div><h2>Coach Planner shared workspace</h2><div class="subtext">Manual save and refresh. Last save wins, with conflict warning if the cloud changed since you loaded.</div></div><button class="btn secondary" onclick="app.closeCloudPanel()">Close</button></div>' +
-      (!cloudConfigured() ? '<div class="cloud-warning"><strong>Setup needed</strong><span>Deploy the Supabase Edge Function and set <code>functionUrl</code> in <code>cloud-config.js</code>. The app will keep working locally until then.</span></div>' : '') +
-      (connected ? '<div class="cloud-connected-box"><h3>' + escapeHtml(state.cloud.displayName || 'Coach Planner') + '</h3><div class="team-pill-row"><span class="team-pill">Workspace · ' + escapeHtml(state.cloud.workspaceSlug || '') + '</span><span class="team-pill ' + (state.cloud.dirty ? 'warn' : '') + '">' + escapeHtml(cloudStatusText()) + '</span></div><div class="cloud-actions"><button class="btn" onclick="app.saveToCloud()">Save local changes to cloud</button><button class="btn secondary" onclick="app.refreshFromCloud()">Refresh this device from cloud</button><button class="btn ghost" onclick="app.signOutCloud()">Switch / sign out</button></div><div class="subtext">Remote updated: ' + escapeHtml(formatDateTime(state.cloud.remoteUpdatedAt)) + '. Session expires: ' + escapeHtml(formatDateTime(state.cloud.expiresAt)) + '.</div></div>' : '<div class="field-row two"><div><label>Workspace code</label><input id="cloudWorkspaceSlug" value="' + escapeAttr(state.cloud.workspaceSlug || cfg.defaultWorkspaceSlug || CLOUD_DEFAULT_WORKSPACE) + '" placeholder="coach-planner"></div><div><label>Workspace display name</label><input id="cloudWorkspaceName" value="' + escapeAttr(state.cloud.displayName || cfg.displayName || 'Coach Planner') + '" placeholder="Coach Planner"></div></div><div class="field-row"><div><label>Shared workspace password</label><input id="cloudWorkspacePassword" type="password" placeholder="Shared password"></div></div><div class="cloud-actions"><button class="btn" onclick="app.accessCloudWorkspace(false)">Access Existing Workspace</button><button class="btn secondary" onclick="app.accessCloudWorkspace(true)">Create New Workspace</button><button class="btn ghost" onclick="app.closeCloudPanel()">Continue local only</button></div>') +
+    return '<div class="overlay" onclick="app.closeCloudPanel()"><div class="modal cloud-modal" onclick="event.stopPropagation()"><div class="row space"><div><div class="eyebrow">Shared team plan</div><h2>Open the latest workspace</h2><div class="subtext">Use the workspace code and password shared by the organizer. Refresh before editing; save to cloud when you want others to see your changes.</div></div><button class="btn secondary" onclick="app.closeCloudPanel()">Close</button></div>' +
+      (!cloudConfigured() ? '<div class="cloud-warning"><strong>Cloud not configured</strong><span>The app will keep working locally. An admin needs to configure <code>cloud-config.js</code>.</span></div>' : '') +
+      (connected ? '<div class="cloud-connected-box"><h3>' + escapeHtml(state.cloud.displayName || 'Coach Planner') + '</h3><div class="team-pill-row"><span class="team-pill">Workspace · ' + escapeHtml(state.cloud.workspaceSlug || '') + '</span><span class="team-pill ' + (state.cloud.dirty ? 'warn' : '') + '">' + escapeHtml(cloudStatusText()) + '</span></div><div class="cloud-actions"><button class="btn secondary" onclick="app.refreshFromCloud()">Refresh latest plan</button><button class="btn" onclick="app.saveToCloud()">Save my changes to Cloud</button><button class="btn ghost" onclick="app.signOutCloud()">Switch / sign out</button></div><div class="subtext">Remote updated: ' + escapeHtml(formatDateTime(state.cloud.remoteUpdatedAt)) + '. Session expires: ' + escapeHtml(formatDateTime(state.cloud.expiresAt)) + '.</div></div>' : '<div class="cloud-user-guide"><h3>Received the app link?</h3><ol><li>Enter the workspace code shared by the organizer.</li><li>Enter the shared team password.</li><li>Click <b>Access Existing Workspace</b>.</li><li>After it connects, click <b>Refresh latest plan</b> to load the team and match layout.</li></ol></div><div class="field-row two"><div><label>Workspace code</label><input id="cloudWorkspaceSlug" value="' + escapeAttr(state.cloud.workspaceSlug || cfg.defaultWorkspaceSlug || CLOUD_DEFAULT_WORKSPACE) + '" placeholder="coach-planner"></div><div><label>Shared workspace password</label><input id="cloudWorkspacePassword" type="password" placeholder="Shared password"></div></div><input id="cloudWorkspaceName" type="hidden" value="' + escapeAttr(state.cloud.displayName || cfg.displayName || 'Coach Planner') + '"><div class="cloud-actions"><button class="btn" onclick="app.accessCloudWorkspace(false)">Access Existing Workspace</button><button class="btn ghost" onclick="app.closeCloudPanel()">Continue local only</button></div><details class="admin-setup-details"><summary>Admin setup / first upload</summary><div class="field-row"><div><label>Workspace display name</label><input id="cloudWorkspaceNameAdmin" value="' + escapeAttr(state.cloud.displayName || cfg.displayName || 'Coach Planner') + '" placeholder="Coach Planner" oninput="document.getElementById(\'cloudWorkspaceName\').value=this.value"></div></div><ol><li>Use this only once, on the device with the latest local data.</li><li>Export a backup before creating the workspace.</li><li>Create the workspace, then choose <b>Save my changes to Cloud</b>.</li><li>Share the workspace code and password with the team.</li></ol><button class="btn secondary" onclick="app.accessCloudWorkspace(true)">Admin: Create Workspace</button></details>') +
       (state.cloud.error ? '<div class="cloud-error">' + escapeHtml(state.cloud.error) + '</div>' : '') +
-      '<div class="cloud-notes"><h3>First-time setup</h3><ul><li>On the device with the latest data, keep workspace code <b>coach-planner</b>, enter the shared password, and choose <b>Create New Workspace</b>.</li><li>After the workspace connects, choose <b>Save local changes to cloud</b> to publish this device as the first shared snapshot.</li><li>On another device, choose <b>Access Existing Workspace</b> with the same code and password, then refresh from cloud before editing.</li></ul><h3>How this MVP works</h3><ul><li>Local edits save immediately on this device.</li><li>Use Save to Cloud when you want other devices to see changes.</li><li>Use Refresh from Cloud to load another device&#39;s latest save.</li><li>Uploaded avatars and team backgrounds stay inside the snapshot for this MVP.</li></ul></div></div></div>';
+      '<div class="cloud-notes"><h3>How to use the shared plan</h3><ul><li>Refresh from Cloud before making changes.</li><li>Open the selected team and match to see the saved lineup and rotations.</li><li>If you edit the lineup, substitutions, date, time, opponent, or location, choose <b>Save my changes to Cloud</b> so others can see it.</li><li>Local edits still save on this device immediately.</li></ul></div></div></div>';
   }
 
   function render() {
@@ -2946,13 +2963,14 @@
     var snapshot = lineupMap || lineupFor(match);
     return '<div class="' + className + '">' + FORMATIONS[match.formation].map(function (slot) { return mode === 'edit' ? renderPositionSlot(match, slot, snapshot) : renderShareSlot(match, slot, snapshot); }).join('') + '</div>';
   }
-  function renderPositionSlot(match, slot, lineupMap) {
+    function renderPositionSlot(match, slot, lineupMap) {
     var playerId = (lineupMap || lineupFor(match))[slot.position];
     var mp = playerId ? data.matchPlayers.find(function (p) { return p.id === playerId; }) : null;
     var ctx = mp ? playerContext(mp) : null;
     var active = state.activeSlot === slot.position ? ' active' : '';
     var filled = ctx ? ' filled' : '';
-    return '<div class="position-slot' + active + filled + '" style="' + slotStyle(slot) + '" onclick="app.selectSlot(\'' + slot.position + '\')">' + (ctx ? '<button class="clear" onclick="event.stopPropagation();app.clearSlot(\'' + match.id + '\',\'' + slot.position + '\')">x</button>' + avatarHtml(ctx.globalPlayer ? ctx.globalPlayer.id : null, ctx.avatarId, '') + '<div class="name">' + escapeHtml(ctx.name.split(' ')[0]) + '</div><div class="pos">' + slot.position + '</div>' : '<div class="pos">' + slot.position + '</div><div style="font-size:28px;font-weight:1000">+</div>') + '</div>';
+    var rating = ctx ? assignedStarsText(match, ctx, slot.position) : '';
+    return '<div class="position-slot' + active + filled + '" style="' + slotStyle(slot) + '" onclick="app.selectSlot(\'' + slot.position + '\')">' + (ctx ? '<button class="clear" onclick="event.stopPropagation();app.clearSlot(\'' + match.id + '\',\'' + slot.position + '\')">x</button>' + avatarHtml(ctx.globalPlayer ? ctx.globalPlayer.id : null, ctx.avatarId, '') + '<div class="name">' + escapeHtml(ctx.name.split(' ')[0]) + '</div><div class="pos"><span>' + slot.position + '</span><em>' + escapeHtml(rating) + '</em></div>' : '<div class="pos"><span>' + slot.position + '</span></div><div style="font-size:28px;font-weight:1000">+</div>') + '</div>';
   }
   function renderAssignablePlayer(mp, used) {
     var ctx = playerContext(mp);
@@ -3012,12 +3030,17 @@
       return '<option value="' + mp.id + '" ' + (mp.id === selected ? 'selected' : '') + '>' + escapeHtml(ctx.name + suffix) + '</option>';
     }).join('');
   }
-  function renderSubPositionControl(match, s) {
+    function renderSubPositionControl(match, s) {
     var label = subPositionLabel(match, s);
+    var before = lineupBeforeWindow(match, s.windowId);
+    var outPos = positionOfPlayer(before, s.playerOutId);
+    var targetPos = s.position || outPos || '';
+    var inMp = s.playerInId ? data.matchPlayers.find(function (p) { return p.id === s.playerInId; }) : null;
+    var star = inMp && targetPos ? assignedStarsText(match, inMp, targetPos) : '';
     if (state.editingSubPositionId === s.id) {
       return '<select class="position-override-select" title="Choose where the incoming player goes" onchange="app.setSubTargetPosition(\'' + match.id + '\',\'' + s.id + '\',this.value)" onblur="app.stopSubPositionOverride()">' + positionOverrideOptions(match, s) + '</select>';
     }
-    return '<button type="button" class="position-chip ' + (s.manualPosition ? 'manual' : '') + '" title="Double-click to override the incoming position" ondblclick="app.startSubPositionOverride(\'' + match.id + '\',\'' + s.id + '\')">' + escapeHtml(label) + '</button>';
+    return '<button type="button" class="position-chip ' + (s.manualPosition ? 'manual' : '') + '" title="Double-click to override the incoming position" ondblclick="app.startSubPositionOverride(\'' + match.id + '\',\'' + s.id + '\')"><span>' + escapeHtml(label) + '</span>' + (star ? '<em>' + escapeHtml(star) + '</em>' : '') + '</button>';
   }
   function renderSubRow(match, s) {
     var inPlayers = candidateInPlayers(match, s);
@@ -3270,22 +3293,27 @@
       return '<div class="share-window"><div class="share-window-title">' + escapeHtml(w.label) + '</div>' + (rows.length ? rows.map(function (s) { return renderShareSubRow(match, s); }).join('') : '<div class="share-live">No fixed changes</div>') + '</div>';
     }).join('') + '</div>';
   }
-  function renderShareSubRow(match, s) {
+    function renderShareSubRow(match, s) {
     var inMp = data.matchPlayers.find(function (p) { return p.id === s.playerInId; });
     var outMp = data.matchPlayers.find(function (p) { return p.id === s.playerOutId; });
     var inCtx = inMp ? playerContext(inMp) : null;
     var outCtx = outMp ? playerContext(outMp) : null;
-    return '<div class="sub-visual-row poster-sub-row"><div class="mini-person in">' + (inCtx ? '<div class="avatar small"><img src="' + inCtx.avatar.src + '"></div><div><em>IN</em><span>' + escapeHtml(inCtx.name.split(' ')[0]) + '</span></div>' : '<span>TBD</span>') + '</div><div class="sub-arrow"><strong>' + escapeHtml(s.position || '') + '</strong></div><div class="mini-person out">' + (outCtx ? '<div class="avatar small"><img src="' + outCtx.avatar.src + '"></div><div><em>OUT</em><span>' + escapeHtml(outCtx.name.split(' ')[0]) + '</span></div>' : '<span>TBD</span>') + '</div></div>';
+    var before = lineupBeforeWindow(match, s.windowId);
+    var outPos = positionOfPlayer(before, s.playerOutId);
+    var targetPos = s.position || outPos || '';
+    var star = inMp && targetPos ? assignedStarsText(match, inMp, targetPos) : '';
+    return '<div class="sub-visual-row poster-sub-row"><div class="mini-person in">' + (inCtx ? '<div class="avatar small"><img src="' + inCtx.avatar.src + '"></div><div><em>IN</em><span>' + escapeHtml(inCtx.name.split(' ')[0]) + '</span>' + (star ? '<small>' + escapeHtml(star) + '</small>' : '') + '</div>' : '<span>TBD</span>') + '</div><div class="sub-arrow"><strong>' + escapeHtml(targetPos || '') + '</strong>' + (star ? '<small>' + escapeHtml(star) + '</small>' : '') + '</div><div class="mini-person out">' + (outCtx ? '<div class="avatar small"><img src="' + outCtx.avatar.src + '"></div><div><em>OUT</em><span>' + escapeHtml(outCtx.name.split(' ')[0]) + '</span></div>' : '<span>TBD</span>') + '</div></div>';
   }
 
-  function renderShareSlot(match, slot, lineupMap) {
+    function renderShareSlot(match, slot, lineupMap) {
     var playerId = (lineupMap || lineupFor(match))[slot.position];
     var mp = playerId ? data.matchPlayers.find(function (p) { return p.id === playerId; }) : null;
     if (!mp) return '<div class="share-slot compact-slot empty" style="' + slotStyle(slot) + '"><div class="label">' + slot.position + '</div></div>';
     var ctx = playerContext(mp);
-    return '<div class="share-slot compact-slot filled" style="' + slotStyle(slot) + '">' + avatarHtml(ctx.globalPlayer ? ctx.globalPlayer.id : null, ctx.avatarId, '') + '<div class="label">' + slot.position + ' ' + escapeHtml(ctx.name.split(' ')[0]) + '</div></div>';
+    var rating = assignedStarsText(match, ctx, slot.position);
+    return '<div class="share-slot compact-slot filled" style="' + slotStyle(slot) + '">' + avatarHtml(ctx.globalPlayer ? ctx.globalPlayer.id : null, ctx.avatarId, '') + '<div class="label">' + slot.position + ' ' + escapeHtml(ctx.name.split(' ')[0]) + ' · ' + escapeHtml(rating) + '</div></div>';
   }
-  function buildShareText(match) {
+    function buildShareText(match) {
     var lines = [];
     var t = activeTournament();
     lines.push("Match Plan - " + matchDisplayTitle(match));
@@ -3300,7 +3328,7 @@
     lines.push("Starting 7:");
     FORMATIONS[match.formation].forEach(function (slot) {
       var mp = data.matchPlayers.find(function (p) { return p.id === lineupFor(match)[slot.position]; });
-      lines.push(slot.position + ": " + (mp ? playerContext(mp).name : "TBD"));
+      lines.push(slot.position + ": " + (mp ? playerContext(mp).name + " (" + assignedStarsText(match, mp, slot.position) + ")" : "TBD"));
     });
     var bench = benchPlayers(match).map(function (mp) { return playerContext(mp).name; });
     lines.push("");
@@ -3317,7 +3345,11 @@
         rows.forEach(function (s) {
           var inMp = data.matchPlayers.find(function (p) { return p.id === s.playerInId; });
           var outMp = data.matchPlayers.find(function (p) { return p.id === s.playerOutId; });
-          lines.push("- " + (inMp ? playerContext(inMp).name : "TBD") + " IN at " + subPositionLabel(match, s) + " -> " + (outMp ? playerContext(outMp).name : "TBD") + " OUT");
+          var before = lineupBeforeWindow(match, s.windowId);
+          var outPos = positionOfPlayer(before, s.playerOutId);
+          var targetPos = s.position || outPos || '';
+          var inRating = inMp && targetPos ? " (" + assignedStarsText(match, inMp, targetPos) + ")" : "";
+          lines.push("- " + (inMp ? playerContext(inMp).name : "TBD") + inRating + " IN at " + subPositionLabel(match, s) + " -> " + (outMp ? playerContext(outMp).name : "TBD") + " OUT");
         });
       }
     });
@@ -3519,7 +3551,7 @@
           if (slot.position === 'GK') y = Math.min(fieldY + fieldH - 72, y);
           if (mp) {
             var ctxp = playerContext(mp);
-            drawMarker(ctx, imageMap[ctxp.avatar.src], slot.position + ' ' + ctxp.name.split(' ')[0], x, y, 88, 230);
+            drawMarker(ctx, imageMap[ctxp.avatar.src], slot.position + ' ' + ctxp.name.split(' ')[0] + ' · ' + assignedStarsText(match, ctxp, slot.position), x, y, 88, 255);
           } else {
             fillRoundRect(ctx, x - 60, y - 25, 120, 50, 25, 'rgba(16,45,89,0.9)', null, 0);
             drawFitText(ctx, slot.position, x, y + 10, 100, '900 26px Arial, sans-serif', '#ffffff', 'center');
@@ -3553,7 +3585,11 @@
             rows.forEach(function (s, i) {
               var inp = data.matchPlayers.find(function (p) { return p.id === s.playerInId; });
               var outp = data.matchPlayers.find(function (p) { return p.id === s.playerOutId; });
-              var text = (inp ? playerContext(inp).name.split(' ')[0] : 'TBD') + ' in → ' + (outp ? playerContext(outp).name.split(' ')[0] : 'TBD') + ' out';
+              var before = lineupBeforeWindow(match, s.windowId);
+              var outPos = positionOfPlayer(before, s.playerOutId);
+              var targetPos = s.position || outPos || '';
+              var inRating = inp && targetPos ? ' ' + assignedStarsText(match, inp, targetPos) : '';
+              var text = (inp ? playerContext(inp).name.split(' ')[0] : 'TBD') + inRating + ' in at ' + (targetPos || 'POS') + ' → ' + (outp ? playerContext(outp).name.split(' ')[0] : 'TBD') + ' out';
               drawFitText(ctx, text, 350, cursorY + 40 + i * 36, 720, '800 23px Arial, sans-serif', '#52637c');
             });
           } else {
@@ -3812,7 +3848,7 @@
     updateGlobalMembership: function (gpId, teamId, membership) { setGlobalMembership(gpId, teamId, membership); save(); render(); toast('Membership updated.'); },
     updateGlobalPlayerField: function (gpId, field, value) { var gp = globalPlayer(gpId); if (!gp) return; if (field === 'email') { gp.emails = Array.isArray(gp.emails) ? gp.emails : []; gp.email = normalizeEmail(value); if (gp.email && gp.emails.indexOf(gp.email) < 0) gp.emails.unshift(gp.email); } else if (field === 'soccerExperience') gp.soccerExperience = value || 'lifelong'; else if (field === 'runningCapacity') gp.runningCapacity = value || 'm45'; else gp[field] = value; gp.updatedAt = nowIso(); save(); render(); },
     uploadTeamBackground: function () { var tm = activeTeam(); var input = document.getElementById('teamBackgroundUpload'); var file = input && input.files && input.files[0]; if (!tm || !file) return toast('Choose a background image first.'); if (!/^image\//.test(file.type || '')) return toast('Please upload an image file.'); var reader = new FileReader(); reader.onload = function () { tm.backgroundDataUrl = reader.result; tm.backgroundSrc = ''; tm.updatedAt = nowIso(); save(); render(); toast('Team background updated.'); }; reader.readAsDataURL(file); },
-    clearTeamBackground: function () { var tm = activeTeam(); if (!tm) return; tm.backgroundDataUrl = ''; tm.backgroundSrc = tm.id === 'team_intuit_united' ? 'assets/team-backgrounds/intuit-united-blue.png' : defaultTeamBackground(); tm.updatedAt = nowIso(); save(); render(); toast('Team background reset.'); },
+    clearTeamBackground: function () { var tm = activeTeam(); if (!tm) return; tm.backgroundDataUrl = ''; tm.backgroundSrc = defaultTeamBackground(); tm.updatedAt = nowIso(); save(); render(); toast('Team background reset.'); },
     deleteGlobalPlayer: function (gpId) { var gp = globalPlayer(gpId); if (!gp) return; if (teamPlayersForGlobal(gpId).length) return toast('Remove this player from all teams before deleting permanently.'); var typed = prompt('Delete permanently. Type the player name to confirm:', ''); if (typed !== gp.name) return toast('Delete cancelled.'); data.globalPlayers = data.globalPlayers.filter(function (p) { return p.id !== gpId; }); data.teamPlayers = data.teamPlayers.filter(function (p) { return p.globalPlayerId !== gpId; }); data.tournamentPlayers = data.tournamentPlayers.filter(function (p) { return p.globalPlayerId !== gpId; }); data.matchPlayers = data.matchPlayers.filter(function (p) { return p.globalPlayerId !== gpId; }); state.profilePlayerId = null; save(); render(); toast('Player deleted permanently.'); },
     resetData: resetData,
     setActiveTournament: function (id) { state.activeTournamentId = id; var t = data.tournaments.find(function (x) { return x.id === id; }); if (t && t.teamId) state.activeTeamId = t.teamId; syncTournamentRosterFromTeam(id); var m = nextMatch(id); state.activeMatchId = m && m.id; render(); },

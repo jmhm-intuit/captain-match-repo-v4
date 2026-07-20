@@ -1,14 +1,25 @@
-# Coach Planner v7.03
+# Coach Planner v7.04
 
 Cloud Snapshot MVP for the multi-team 7v7 soccer coach planner.
 
-v7.03 builds on the Supabase-connected v7 app to the validated Supabase Edge Function for this project. It keeps the local-first app experience, but adds a shared cloud workspace using Supabase. Local data still saves immediately on the device. Cloud sync is manual for MVP safety: **Save to Cloud** and **Refresh from Cloud**.
+v7.04 builds on the Supabase-connected v7 app to the validated Supabase Edge Function for this project. It keeps the local-first app experience, but adds a shared cloud workspace using Supabase. Local data still saves immediately on the device. Cloud sync is manual for MVP safety: **Save to Cloud** and **Refresh from Cloud**.
 
-## What changed in v7.03
+## What changed in v7.04
+
+## v7.04 visual and sharing updates
+
+- Uses the bright soccer-field image as the main Home/workspace background, with the crop centered lower so the field and goal are visible instead of only sky.
+- Makes the selected team color more prominent through overlays, borders, and workspace tinting.
+- Rewrites cloud instructions for normal users first: open the link, access the existing workspace, refresh the latest plan, and only save to cloud after making edits.
+- Moves first-time/admin workspace creation into secondary instructions.
+- Adds assigned-position rating stars to the lineup field, moment views, substitution rows, share text, and generated share image.
+
+No Supabase schema, secret, or Edge Function change is required for v7.04.
+
 
 - Preconfigures the public cloud endpoint in `cloud-config.js`:
   - `https://wfuxkbigfrmfjvkoxepb.supabase.co/functions/v1/coach-planner-snapshot`
-- Updates the app version to **7.03** and refreshes the PWA cache name.
+- Updates the app version to **7.04** and refreshes the PWA cache name.
 - Updates the included Edge Function so it does **not** return `password_hash` to the browser.
 - Adds service-role grant SQL to avoid `permission denied for table workspaces` during first setup.
 - Adds clearer first-time setup guidance inside the cloud workspace modal.
@@ -105,7 +116,7 @@ This file is safe to commit because it contains only public, non-secret configur
 
 ## First-time app setup
 
-Use this flow after deploying v7.03 to GitHub Pages.
+Use this flow after deploying v7.04 to GitHub Pages.
 
 ### Main device with the latest local data
 
@@ -150,7 +161,7 @@ The app remains local-first. Edits save immediately to the current device, and o
 
 ## Conflict behavior
 
-v7.03 uses last-save-wins, but warns before overwriting if the cloud snapshot changed since the device loaded it.
+v7.04 uses last-save-wins, but warns before overwriting if the cloud snapshot changed since the device loaded it.
 
 If a conflict warning appears, the safer choice is usually:
 
@@ -161,7 +172,7 @@ Cancel → Refresh from Cloud → reapply your changes → Save to Cloud
 ## Local test
 
 ```bash
-cd captain-match-planner-v7_03-local
+cd captain-match-planner-v7_04-local
 python3 -m http.server 5177
 ```
 
@@ -180,15 +191,15 @@ cd ~/Documents/GitHub/captain-match-repo-v4
 
 git checkout main
 git pull
-git checkout -b update-v7-03
+git checkout -b update-v7-04
 
-# Copy the contents of captain-match-planner-v7_03-local into this repo folder.
+# Copy the contents of captain-match-planner-v7_04-local into this repo folder.
 # Keep the .git folder.
 
 git status
 git add .
-git commit -m "Update Coach Planner to v7.03 schedule cloud persistence"
-git push origin update-v7-03
+git commit -m "Update Coach Planner to v7.04 schedule cloud persistence"
+git push origin update-v7-04
 ```
 
 Then merge to main and push.
@@ -203,7 +214,7 @@ After deploy, hard refresh the browser. For the installed PWA, close and reopen 
 - The cloud MVP is manual sync, not live multi-user collaboration.
 
 
-## v7.02/v7.03 updates
+## v7.02/v7.04 updates
 
 - Match plans are now explicitly stamped as saved when generated or edited. Saved lineup/substitution plans stay inside the local database and Supabase cloud snapshot.
 - The Match Planner header and Matches list now show whether a saved plan exists.
@@ -211,7 +222,7 @@ After deploy, hard refresh the browser. For the installed PWA, close and reopen 
 - Added the new centered soccer-field home background and made team backgrounds more visible so switching teams has stronger visual contrast.
 
 
-## v7.03 schedule persistence fix
+## v7.04 schedule persistence fix
 
 - Match schedule fields now use a dedicated schedule-save path: date, time, opponent, and field/location are stamped with `scheduleSavedAt` and protected from generated schedule cleanup.
 - Save to Cloud now flushes any visible match detail inputs before creating the Supabase snapshot, so values typed immediately before saving are included.
