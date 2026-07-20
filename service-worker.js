@@ -1,10 +1,11 @@
-/* Captain Match Planner PWA service worker */
-const CACHE_NAME = 'captain-match-planner-v6-01-baseline-cache';
+/* Coach Planner PWA service worker */
+const CACHE_NAME = 'coach-planner-v7-01-cloud-snapshot-cache';
 const CORE_ASSETS = [
   './',
   './index.html',
   './database-check.html',
   './manifest.webmanifest',
+  './cloud-config.js',
   './src/app.js',
   './src/styles.css',
   './assets/soccer-background.png',

@@ -1,89 +1,174 @@
-# Captain Match Planner v6.01
+# Coach Planner v7.01
 
-Installable local-first PWA for multi-team 7v7 soccer match planning.
+Cloud Snapshot MVP for the multi-team 7v7 soccer coach planner.
 
-## What changed in v6.01
+v7.01 is the first package connected to the validated Supabase Edge Function for this project. It keeps the local-first app experience, but adds a shared cloud workspace using Supabase. Local data still saves immediately on the device. Cloud sync is manual for MVP safety: **Save to Cloud** and **Refresh from Cloud**.
 
-### Baseline teams and roster
+## What changed in v7.01
 
-- Keeps the current Green FC baseline.
-- Adds the second baseline team as **Intuit United FC**.
-- Intuit United FC uses the existing blue team branding/background and plays on Wednesdays.
-- Adds an Intuit United FC tournament starting **Wednesday, July 22, 2026**.
-- Seeds 8 Wednesday matches:
-  - July 22, July 29, August 5, August 12, August 19, August 26, September 3, September 10.
-- Imports the Intuit United FC survey roster as roster players.
-- Jose, Franco/Franco Duarte, Nisanth/Nishanth, and Fernando/Fernando Mendoza are matched as shared roster players across Green FC and Intuit United FC.
-- Miguel and Migu Malla remain separate players.
-- Player names from the roster are lightly normalized with starting capitals only.
-- Emails are stored on global player profiles for future iterations.
+- Preconfigures the public cloud endpoint in `cloud-config.js`:
+  - `https://wfuxkbigfrmfjvkoxepb.supabase.co/functions/v1/coach-planner-snapshot`
+- Updates the app version to **7.01** and refreshes the PWA cache name.
+- Updates the included Edge Function so it does **not** return `password_hash` to the browser.
+- Adds service-role grant SQL to avoid `permission denied for table workspaces` during first setup.
+- Adds clearer first-time setup guidance inside the cloud workspace modal.
+- Keeps all v7.0 cloud behavior:
+  - visible cloud status pill
+  - shared workspace code + shared password
+  - 30-day remembered session on the device
+  - manual **Save to Cloud** and **Refresh from Cloud**
+  - local-only fallback
+  - conflict warning if cloud data changed since the device loaded it
+  - uploaded avatars and team backgrounds stored inside the snapshot
 
-### Survey mapping
+## Architecture
 
-Position answer mapping:
+```text
+GitHub Pages frontend
+→ Supabase Edge Function
+→ Supabase workspaces + app_snapshots tables
+```
 
-- `This is a great position for me` = 5 stars.
-- `I am good here` = 4 stars.
-- `I can play if needed` = 2 stars.
-- `I not good here` = 1 star.
+The browser never receives the Supabase service role key, `TEAM_PASSWORD_SECRET`, or any deployed secret. The static app only contains the public function URL.
 
-Player background mapping:
+## Supabase status for this project
 
-- `less than 5 years` = Less than 5 years.
-- `between 5 to 10 years` = 5 to 10 years.
-- `Since I was a kid` = All my life.
-- `15 min non stop` = 15 min.
-- `30 min non stop` = 30 min.
-- `45 min non stop` = 45 min.
-- `More than 45 min` = 45+ min.
+Already validated in Supabase:
 
-When a player has more than three strong 4/5 positions, the app keeps the best/scarcest three and downgrades extra strong roles to 3.
+```text
+Function URL: https://wfuxkbigfrmfjvkoxepb.supabase.co/functions/v1/coach-planner-snapshot
+JWT verification: off
+CORS: working
+Create/access workspace: working
+Save/load snapshot: working
+password_hash exposed to browser: false after v7.01 function patch
+```
 
-### CSV roster import
+## Supabase setup from scratch
 
-- Adds a **Bulk CSV** action in the Team page.
-- CSV import applies to the currently selected team.
-- The validation preview shows rows found, matched players, new players, and warnings.
-- Matching priority:
-  1. Email match.
-  2. Exact name / alias match.
-  3. Similar-name recommendation.
-  4. Create new player.
-- Matched existing players can update email, avatar, skills, soccer experience, and running capacity after the review step.
-- Imported CSV players become roster players for the selected team and support players on other active teams unless they already have a roster role there.
+Only needed if recreating the backend in a new Supabase project.
 
-### Duplicate avatars
+### 1. Run the database migration
 
-- Duplicate avatars are allowed.
-- When two or more players share the same avatar, the app adds a distinct avatar border color per player to make them easier to identify.
-- The border appears on team rows, profile views, match planning, and Plan Highlights.
+Run this SQL file in Supabase SQL Editor:
 
-### Match planning expectation
+```text
+supabase/migrations/202607200001_cloud_snapshot.sql
+```
 
-- Intuit United FC starts with a larger roster and is expected to use heavier rotations.
-- Heavy rotation remains the preferred pattern for high-bench matches.
+If you already created the tables but the Edge Function shows `permission denied for table workspaces`, run:
 
-## Data migration
+```text
+supabase/migrations/202607200002_service_role_grants.sql
+```
 
-Opening v6.01 over an existing v5.2/v5.1/v5.0/v4.05 local database upgrades the local data model and adds the Intuit United FC baseline if it is missing.
+### 2. Deploy the Edge Function
 
-Recommended before deployment: export a backup from the live app.
+Function path:
 
-## Deployment strategy
+```text
+supabase/functions/coach-planner-snapshot/index.ts
+```
 
-v6.01 is intended as an update over the existing GitHub Pages app using the same repo and URL.
+Function name:
+
+```text
+coach-planner-snapshot
+```
+
+Set **JWT verification off** for this function.
+
+Function secrets:
+
+```text
+SUPABASE_URL                default secret in Supabase
+SUPABASE_SERVICE_ROLE_KEY   default secret in Supabase
+TEAM_PASSWORD_SECRET        custom long random private phrase
+CORS_ORIGIN                 * for private MVP test, or your GitHub Pages origin later
+```
+
+Do not paste service role keys, secrets, or runtime tokens into GitHub or app code.
+
+### 3. Configure the static app
+
+For this project, `cloud-config.js` is already configured:
+
+```js
+window.COACH_PLANNER_CLOUD = {
+  functionUrl: "https://wfuxkbigfrmfjvkoxepb.supabase.co/functions/v1/coach-planner-snapshot",
+  defaultWorkspaceSlug: "coach-planner",
+  displayName: "Coach Planner"
+};
+```
+
+This file is safe to commit because it contains only public, non-secret configuration.
+
+## First-time app setup
+
+Use this flow after deploying v7.01 to GitHub Pages.
+
+### Main device with the latest local data
+
+1. Open the deployed app.
+2. Export a local backup first from the app.
+3. Open **Coach Planner Cloud** from the Home page or the cloud status pill.
+4. Keep workspace code:
+
+```text
+coach-planner
+```
+
+5. Enter the shared workspace password you want to use for the team.
+6. Click **Create New Workspace**.
+7. When it connects, click **Save local changes to cloud**.
+8. Confirm the cloud status says **Connected** or **Saved**.
+
+### Second device / another user
+
+1. Open the same deployed app URL.
+2. Open **Coach Planner Cloud**.
+3. Use workspace code:
+
+```text
+coach-planner
+```
+
+4. Enter the shared workspace password.
+5. Click **Access Existing Workspace**.
+6. The cloud snapshot should load. Use **Refresh from Cloud** before editing if unsure.
+
+## Daily use
+
+Recommended habit:
+
+```text
+Before editing on a device: Refresh from Cloud.
+After meaningful edits: Save to Cloud.
+```
+
+The app remains local-first. Edits save immediately to the current device, and only become visible on other devices after **Save to Cloud**.
+
+## Conflict behavior
+
+v7.01 uses last-save-wins, but warns before overwriting if the cloud snapshot changed since the device loaded it.
+
+If a conflict warning appears, the safer choice is usually:
+
+```text
+Cancel → Refresh from Cloud → reapply your changes → Save to Cloud
+```
 
 ## Local test
 
 ```bash
-cd captain-match-planner-v6_01-local
-python3 -m http.server 5176
+cd captain-match-planner-v7_01-local
+python3 -m http.server 5177
 ```
 
 Open:
 
 ```text
-http://localhost:5176
+http://localhost:5177
 ```
 
 ## GitHub Pages deployment
@@ -95,15 +180,24 @@ cd ~/Documents/GitHub/captain-match-repo-v4
 
 git checkout main
 git pull
-git checkout -b update-v6-01
+git checkout -b update-v7-01
 
-# Copy the contents of captain-match-planner-v6_01-local into this repo folder.
+# Copy the contents of captain-match-planner-v7_01-local into this repo folder.
 # Keep the .git folder.
 
 git status
 git add .
-git commit -m "Update Captain Match Planner to v6.01"
-git push origin update-v6-01
+git commit -m "Update Coach Planner to v7.01 Supabase cloud connection"
+git push origin update-v7-01
 ```
 
 Then merge to main and push.
+
+After deploy, hard refresh the browser. For the installed PWA, close and reopen it. If it still shows an older version, uninstall/reinstall the PWA or clear the site data once.
+
+## Safety notes
+
+- Do not put service role keys, `TEAM_PASSWORD_SECRET`, passwords, or runtime tokens in app code.
+- `cloud-config.js` should contain only the public Edge Function URL.
+- Keep using Export backups before major cloud saves or migrations.
+- The cloud MVP is manual sync, not live multi-user collaboration.

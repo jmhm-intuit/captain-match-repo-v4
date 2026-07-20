@@ -2,8 +2,8 @@
   var STORAGE_KEY = "squadflow_captain_v2_local";
   var DB_NAME = "captain_match_planner_local_db";
   var DB_VERSION = 4;
-  var DB_SCHEMA_VERSION = 9;
-  var APP_VERSION = "6.01";
+  var DB_SCHEMA_VERSION = 10;
+  var APP_VERSION = "7.01";
   var POS_KEYS = ["forward", "wing", "center", "defense", "goalie"];
   var POS_SHORT = { forward: "FWD", wing: "WNG", center: "CTR", defense: "DEF", goalie: "GK" };
   var POS_FULL = { forward: "Forward", wing: "Wing", center: "Center", defense: "Defense", goalie: "Goalie" };
@@ -106,12 +106,176 @@
     dataTable: "tournaments",
     profilePlayerId: null,
     lastPlanMatchId: null,
-    bulkRosterPreview: null
+    bulkRosterPreview: null,
+    cloudPanelOpen: false,
+    cloud: {
+      mode: "local",
+      workspaceSlug: "coach-planner",
+      displayName: "Coach Planner",
+      token: "",
+      expiresAt: "",
+      remoteUpdatedAt: "",
+      loadedAt: "",
+      lastSavedAt: "",
+      dirty: false,
+      saving: false,
+      loading: false,
+      error: "",
+      deviceId: ""
+    },
+    cloudApplying: false,
+    lastCloudReminderAt: 0
   };
 
   var data = emptyData();
   var saveQueue = Promise.resolve();
   var DataService = createDataService();
+
+  var CLOUD_SESSION_KEY = "coach_planner_cloud_session";
+  var CLOUD_DEVICE_KEY = "coach_planner_cloud_device";
+  var CLOUD_DEFAULT_WORKSPACE = "coach-planner";
+  function cloudConfig() {
+    var cfg = window.COACH_PLANNER_CLOUD || {};
+    return {
+      functionUrl: String(cfg.functionUrl || cfg.endpoint || "").replace(/\/$/, ""),
+      defaultWorkspaceSlug: String(cfg.defaultWorkspaceSlug || CLOUD_DEFAULT_WORKSPACE),
+      displayName: String(cfg.displayName || "Coach Planner")
+    };
+  }
+  function cloudEndpoint() { return cloudConfig().functionUrl; }
+  function cloudConfigured() { return !!cloudEndpoint(); }
+  function cloudDeviceId() {
+    try {
+      var existing = localStorage.getItem(CLOUD_DEVICE_KEY);
+      if (existing) return existing;
+      var id = "device_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-5);
+      localStorage.setItem(CLOUD_DEVICE_KEY, id);
+      return id;
+    } catch (e) { return "device_memory"; }
+  }
+  function loadCloudSession() {
+    var cfg = cloudConfig();
+    state.cloud.workspaceSlug = cfg.defaultWorkspaceSlug || CLOUD_DEFAULT_WORKSPACE;
+    state.cloud.displayName = cfg.displayName || "Coach Planner";
+    state.cloud.deviceId = cloudDeviceId();
+    try {
+      var raw = localStorage.getItem(CLOUD_SESSION_KEY);
+      if (!raw) return;
+      var session = JSON.parse(raw);
+      if (!session || !session.token || !session.expiresAt || new Date(session.expiresAt).getTime() <= Date.now()) {
+        localStorage.removeItem(CLOUD_SESSION_KEY);
+        return;
+      }
+      state.cloud.mode = "connected";
+      state.cloud.workspaceSlug = session.workspaceSlug || state.cloud.workspaceSlug;
+      state.cloud.displayName = session.displayName || state.cloud.displayName;
+      state.cloud.token = session.token;
+      state.cloud.expiresAt = session.expiresAt;
+      state.cloud.remoteUpdatedAt = session.remoteUpdatedAt || "";
+      state.cloud.loadedAt = session.loadedAt || "";
+      state.cloud.lastSavedAt = session.lastSavedAt || "";
+      state.cloud.dirty = !!session.dirty;
+    } catch (e) {
+      try { localStorage.removeItem(CLOUD_SESSION_KEY); } catch (ignore) {}
+    }
+  }
+  function persistCloudSession() {
+    try {
+      if (!state.cloud.token) { localStorage.removeItem(CLOUD_SESSION_KEY); return; }
+      localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify({
+        workspaceSlug: state.cloud.workspaceSlug,
+        displayName: state.cloud.displayName,
+        token: state.cloud.token,
+        expiresAt: state.cloud.expiresAt,
+        remoteUpdatedAt: state.cloud.remoteUpdatedAt,
+        loadedAt: state.cloud.loadedAt,
+        lastSavedAt: state.cloud.lastSavedAt,
+        dirty: !!state.cloud.dirty
+      }));
+    } catch (e) {}
+  }
+  function cloudRequest(action, payload) {
+    var endpoint = cloudEndpoint();
+    if (!endpoint) return Promise.reject(new Error("Cloud function URL is not configured."));
+    return fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ action: action }, payload || {}))
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        if (!res.ok || body.ok === false) {
+          var err = new Error(body.error || ("Cloud request failed: " + res.status));
+          err.code = body.code;
+          err.body = body;
+          throw err;
+        }
+        return body;
+      });
+    });
+  }
+  function cloudSnapshotPayload() {
+    return {
+      exportFormat: "captain-match-planner-cloud-snapshot",
+      appVersion: APP_VERSION,
+      schemaVersion: DB_SCHEMA_VERSION,
+      exportedAt: nowIso(),
+      data: clone(data)
+    };
+  }
+  function applySnapshotFromCloud(snapshot) {
+    if (!snapshot || !snapshot.data) return Promise.resolve(false);
+    data = migrateData(snapshot.data);
+    state.activeTeamId = preferredTeamId();
+    data.tournaments.forEach(function (t) { reconcileTournamentSchedule(t.id); });
+    state.activeTournamentId = preferredTournamentId() || (teamTournaments(state.activeTeamId)[0] && teamTournaments(state.activeTeamId)[0].id) || (data.tournaments[0] && data.tournaments[0].id);
+    var cloudNext = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null;
+    state.activeMatchId = cloudNext ? cloudNext.id : (data.matches[0] && data.matches[0].id);
+    state.cloudApplying = true;
+    return save({ skipCloudDirty: true }).then(function () {
+      state.cloudApplying = false;
+      return true;
+    }).catch(function (err) {
+      state.cloudApplying = false;
+      throw err;
+    });
+  }
+  function setCloudFromResponse(resp) {
+    var workspace = resp.workspace || {};
+    if (resp.token) state.cloud.token = resp.token;
+    if (resp.expiresAt) state.cloud.expiresAt = resp.expiresAt;
+    state.cloud.mode = "connected";
+    state.cloud.workspaceSlug = workspace.workspace_slug || workspace.workspaceSlug || state.cloud.workspaceSlug || CLOUD_DEFAULT_WORKSPACE;
+    state.cloud.displayName = workspace.display_name || workspace.displayName || state.cloud.displayName || "Coach Planner";
+    var snap = resp.snapshot || {};
+    if (snap.updated_at || snap.updatedAt) {
+      state.cloud.remoteUpdatedAt = snap.updated_at || snap.updatedAt;
+      state.cloud.loadedAt = state.cloud.remoteUpdatedAt;
+    }
+    state.cloud.error = "";
+    persistCloudSession();
+  }
+  function markCloudDirty() {
+    if (state.cloudApplying || state.cloud.mode !== "connected") return;
+    state.cloud.dirty = true;
+    persistCloudSession();
+    var now = Date.now();
+    if (!state.lastCloudReminderAt || now - state.lastCloudReminderAt > 90000) {
+      state.lastCloudReminderAt = now;
+      state.toast = "Unsaved cloud changes. Use Save to Cloud so other devices can see updates.";
+    }
+  }
+  function cloudStatusText() {
+    if (state.cloud.saving) return "Saving...";
+    if (state.cloud.loading) return "Loading...";
+    if (state.cloud.mode !== "connected") return "Local only";
+    if (state.cloud.dirty) return "Unsaved changes";
+    return "Connected";
+  }
+  function cloudStatusClass() {
+    if (state.cloud.mode !== "connected") return "local";
+    if (state.cloud.dirty) return "dirty";
+    return "connected";
+  }
 
   function uid(prefix) {
     return prefix + "_" + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
@@ -339,7 +503,8 @@
       }
     };
   }
-  function save() {
+  function save(options) {
+    options = options || {};
     state.persistenceStatus = "saving";
     var snapshot = clone(data);
     saveQueue = saveQueue.catch(function () {}).then(function () {
@@ -347,6 +512,7 @@
     }).then(function () {
       state.persistenceStatus = "saved";
       state.lastSavedAt = nowIso();
+      if (!options.skipCloudDirty) markCloudDirty();
     }).catch(function (err) {
       console.error("Local save failed", err);
       state.persistenceStatus = "error";
@@ -356,7 +522,8 @@
   }
   function initializeApp() {
     var root = document.getElementById("app");
-    if (root) root.innerHTML = '<div class="loading-screen"><div class="loading-card"><h1>Captain Match Planner</h1><p>Opening local database...</p></div></div>';
+    if (root) root.innerHTML = '<div class="loading-screen"><div class="loading-card"><h1>Coach Planner</h1><p>Opening local database...</p></div></div>';
+    loadCloudSession();
     DataService.load().then(function (loaded) {
       data = migrateData(loaded || seedData());
       state.activeTeamId = preferredTeamId();
@@ -367,9 +534,12 @@
       state.activeTournamentId = preferredTournamentId() || (teamTournaments(state.activeTeamId)[0] && teamTournaments(state.activeTeamId)[0].id) || (data.tournaments[0] && data.tournaments[0].id);
       var preferredMatch = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null;
       state.activeMatchId = preferredMatch ? preferredMatch.id : (data.matches[0] && data.matches[0].id);
-      return save();
+      return save({ skipCloudDirty: true });
     }).then(function () {
       render();
+      if (state.cloud.mode === "connected" && !state.cloud.dirty && cloudConfigured()) {
+        setTimeout(function () { refreshFromCloud(true); }, 250);
+      }
     }).catch(function (err) {
       console.error("Could not initialize local database", err);
       data = migrateData(seedData());
@@ -2156,6 +2326,151 @@
     save(); render(); toast("Added as support player.");
   }
 
+  function accessCloudWorkspace(createMode) {
+    var slugEl = document.getElementById('cloudWorkspaceSlug');
+    var nameEl = document.getElementById('cloudWorkspaceName');
+    var passEl = document.getElementById('cloudWorkspacePassword');
+    var slug = normalizeSlug(slugEl && slugEl.value || state.cloud.workspaceSlug || CLOUD_DEFAULT_WORKSPACE);
+    var password = passEl && passEl.value || '';
+    var displayName = nameEl && nameEl.value || state.cloud.displayName || 'Coach Planner';
+    if (!slug) return toast('Enter a workspace code.');
+    if (!password) return toast('Enter the shared workspace password.');
+    state.cloud.loading = true;
+    state.cloud.error = '';
+    render();
+    cloudRequest(createMode ? 'create' : 'access', { workspaceSlug: slug, displayName: displayName, password: password, deviceId: state.cloud.deviceId || cloudDeviceId() }).then(function (resp) {
+      setCloudFromResponse(resp);
+      state.cloud.loading = false;
+      state.cloud.dirty = false;
+      if (resp.snapshot && resp.snapshot.data) {
+        return applySnapshotFromCloud(resp.snapshot).then(function () {
+          state.cloudPanelOpen = false;
+          persistCloudSession();
+          render();
+          toast((createMode ? 'Workspace created and loaded.' : 'Workspace loaded from cloud.'));
+        });
+      }
+      state.cloudPanelOpen = false;
+      state.cloud.dirty = true;
+      persistCloudSession();
+      render();
+      toast((createMode ? 'Workspace created. Save local data to cloud when ready.' : 'Workspace connected. No cloud snapshot yet.'));
+    }).catch(function (err) {
+      state.cloud.loading = false;
+      state.cloud.error = err.message || 'Cloud access failed.';
+      render();
+    });
+  }
+  function normalizeSlug(value) {
+    return String(value || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+  function refreshFromCloud(silent) {
+    if (state.cloud.mode !== 'connected' || !state.cloud.token) { if (!silent) toast('Connect to a workspace first.'); return Promise.resolve(false); }
+    if (state.cloud.dirty && !silent) {
+      var ok = confirm('You have local changes that are not saved to cloud. Refreshing will replace this device with the cloud version. Continue?');
+      if (!ok) return Promise.resolve(false);
+    }
+    state.cloud.loading = true;
+    state.cloud.error = '';
+    if (!silent) render();
+    return cloudRequest('load', { token: state.cloud.token, deviceId: state.cloud.deviceId || cloudDeviceId() }).then(function (resp) {
+      setCloudFromResponse(resp);
+      state.cloud.loading = false;
+      state.cloud.dirty = false;
+      if (resp.snapshot && resp.snapshot.data) {
+        return applySnapshotFromCloud(resp.snapshot).then(function () {
+          persistCloudSession();
+          render();
+          if (!silent) toast('Cloud data refreshed.');
+          return true;
+        });
+      }
+      persistCloudSession();
+      render();
+      if (!silent) toast('No cloud snapshot saved yet.');
+      return false;
+    }).catch(function (err) {
+      state.cloud.loading = false;
+      state.cloud.error = err.message || 'Cloud refresh failed.';
+      render();
+      if (!silent) toast('Cloud refresh failed.');
+      return false;
+    });
+  }
+  function saveToCloud(force) {
+    if (state.cloud.mode !== 'connected' || !state.cloud.token) return toast('Connect to a workspace first.');
+    state.cloud.saving = true;
+    state.cloud.error = '';
+    render();
+    return cloudRequest('save', {
+      token: state.cloud.token,
+      snapshot: cloudSnapshotPayload(),
+      appVersion: APP_VERSION,
+      schemaVersion: DB_SCHEMA_VERSION,
+      clientKnownUpdatedAt: state.cloud.remoteUpdatedAt || state.cloud.loadedAt || '',
+      force: !!force,
+      deviceId: state.cloud.deviceId || cloudDeviceId()
+    }).then(function (resp) {
+      setCloudFromResponse(resp);
+      state.cloud.saving = false;
+      state.cloud.dirty = false;
+      var snap = resp.snapshot || {};
+      state.cloud.remoteUpdatedAt = snap.updated_at || snap.updatedAt || nowIso();
+      state.cloud.loadedAt = state.cloud.remoteUpdatedAt;
+      state.cloud.lastSavedAt = state.cloud.remoteUpdatedAt;
+      persistCloudSession();
+      render();
+      toast('Saved to cloud.');
+    }).catch(function (err) {
+      state.cloud.saving = false;
+      if (err.code === 'snapshot_conflict') {
+        render();
+        var overwrite = confirm('Cloud data changed since this device loaded it. Overwrite cloud with this device data? Choose Cancel to refresh first.');
+        if (overwrite) return saveToCloud(true);
+        return;
+      }
+      state.cloud.error = err.message || 'Cloud save failed.';
+      render();
+      toast('Cloud save failed.');
+    });
+  }
+  function signOutCloud() {
+    if (state.cloud.dirty) {
+      var ok = confirm('You have unsaved cloud changes. Sign out without saving to cloud?');
+      if (!ok) return;
+    }
+    state.cloud = { mode: 'local', workspaceSlug: cloudConfig().defaultWorkspaceSlug || CLOUD_DEFAULT_WORKSPACE, displayName: cloudConfig().displayName || 'Coach Planner', token: '', expiresAt: '', remoteUpdatedAt: '', loadedAt: '', lastSavedAt: '', dirty: false, saving: false, loading: false, error: '', deviceId: cloudDeviceId() };
+    state.cloudPanelOpen = false;
+    persistCloudSession();
+    render();
+    toast('Using local-only mode.');
+  }
+  function renderCloudStatusPill() {
+    var cls = cloudStatusClass();
+    var details = state.cloud.mode === 'connected' ? state.cloud.workspaceSlug : 'not connected';
+    return '<button class="cloud-status-pill ' + cls + '" onclick="app.openCloudPanel()"><span>Cloud</span><strong>' + escapeHtml(cloudStatusText()) + '</strong><small>' + escapeHtml(details) + '</small></button>';
+  }
+  function renderCloudWorkspacePanel(compact) {
+    var cfg = cloudConfig();
+    var configured = cloudConfigured();
+    var connected = state.cloud.mode === 'connected';
+    var status = connected ? (state.cloud.dirty ? 'Unsaved cloud changes' : 'Connected to ' + state.cloud.workspaceSlug) : 'Local-only mode';
+    var setupNote = configured ? '' : '<div class="cloud-warning"><strong>Cloud function URL missing.</strong><span>Set window.COACH_PLANNER_CLOUD.functionUrl in cloud-config.js after deploying the Supabase Edge Function.</span></div>';
+    return '<div class="card cloud-card ' + (compact ? 'compact' : '') + '"><div class="row space"><div><div class="eyebrow">Shared workspace</div><h2>Coach Planner Cloud</h2><div class="subtext">' + escapeHtml(status) + '. Local data still saves on this device immediately.</div></div>' + renderCloudStatusPill() + '</div>' + setupNote +
+      (connected ? '<div class="cloud-actions"><button class="btn" onclick="app.saveToCloud()">Save to Cloud</button><button class="btn secondary" onclick="app.refreshFromCloud()">Refresh from Cloud</button><button class="btn ghost" onclick="app.openCloudPanel()">Cloud settings</button></div><div class="subtext tight">Last cloud save: ' + escapeHtml(formatDateTime(state.cloud.lastSavedAt || state.cloud.remoteUpdatedAt)) + '. Last local save: ' + escapeHtml(formatDateTime(state.lastSavedAt)) + '.</div>' : '<div class="cloud-actions"><button class="btn" onclick="app.openCloudPanel()">Access Shared Workspace</button><button class="btn secondary" onclick="app.openCloudPanel()">Create Workspace</button></div><div class="subtext tight">Use workspace code <b>' + escapeHtml(cfg.defaultWorkspaceSlug || CLOUD_DEFAULT_WORKSPACE) + '</b> when setting up the first shared database.</div>') +
+      '</div>';
+  }
+  function renderCloudModal() {
+    if (!state.cloudPanelOpen) return '';
+    var cfg = cloudConfig();
+    var connected = state.cloud.mode === 'connected';
+    return '<div class="overlay" onclick="app.closeCloudPanel()"><div class="modal cloud-modal" onclick="event.stopPropagation()"><div class="row space"><div><div class="eyebrow">Cloud snapshot MVP</div><h2>Coach Planner shared workspace</h2><div class="subtext">Manual save and refresh. Last save wins, with conflict warning if the cloud changed since you loaded.</div></div><button class="btn secondary" onclick="app.closeCloudPanel()">Close</button></div>' +
+      (!cloudConfigured() ? '<div class="cloud-warning"><strong>Setup needed</strong><span>Deploy the Supabase Edge Function and set <code>functionUrl</code> in <code>cloud-config.js</code>. The app will keep working locally until then.</span></div>' : '') +
+      (connected ? '<div class="cloud-connected-box"><h3>' + escapeHtml(state.cloud.displayName || 'Coach Planner') + '</h3><div class="team-pill-row"><span class="team-pill">Workspace · ' + escapeHtml(state.cloud.workspaceSlug || '') + '</span><span class="team-pill ' + (state.cloud.dirty ? 'warn' : '') + '">' + escapeHtml(cloudStatusText()) + '</span></div><div class="cloud-actions"><button class="btn" onclick="app.saveToCloud()">Save local changes to cloud</button><button class="btn secondary" onclick="app.refreshFromCloud()">Refresh this device from cloud</button><button class="btn ghost" onclick="app.signOutCloud()">Switch / sign out</button></div><div class="subtext">Remote updated: ' + escapeHtml(formatDateTime(state.cloud.remoteUpdatedAt)) + '. Session expires: ' + escapeHtml(formatDateTime(state.cloud.expiresAt)) + '.</div></div>' : '<div class="field-row two"><div><label>Workspace code</label><input id="cloudWorkspaceSlug" value="' + escapeAttr(state.cloud.workspaceSlug || cfg.defaultWorkspaceSlug || CLOUD_DEFAULT_WORKSPACE) + '" placeholder="coach-planner"></div><div><label>Workspace display name</label><input id="cloudWorkspaceName" value="' + escapeAttr(state.cloud.displayName || cfg.displayName || 'Coach Planner') + '" placeholder="Coach Planner"></div></div><div class="field-row"><div><label>Shared workspace password</label><input id="cloudWorkspacePassword" type="password" placeholder="Shared password"></div></div><div class="cloud-actions"><button class="btn" onclick="app.accessCloudWorkspace(false)">Access Existing Workspace</button><button class="btn secondary" onclick="app.accessCloudWorkspace(true)">Create New Workspace</button><button class="btn ghost" onclick="app.closeCloudPanel()">Continue local only</button></div>') +
+      (state.cloud.error ? '<div class="cloud-error">' + escapeHtml(state.cloud.error) + '</div>' : '') +
+      '<div class="cloud-notes"><h3>First-time setup</h3><ul><li>On the device with the latest data, keep workspace code <b>coach-planner</b>, enter the shared password, and choose <b>Create New Workspace</b>.</li><li>After the workspace connects, choose <b>Save local changes to cloud</b> to publish this device as the first shared snapshot.</li><li>On another device, choose <b>Access Existing Workspace</b> with the same code and password, then refresh from cloud before editing.</li></ul><h3>How this MVP works</h3><ul><li>Local edits save immediately on this device.</li><li>Use Save to Cloud when you want other devices to see changes.</li><li>Use Refresh from Cloud to load another device&#39;s latest save.</li><li>Uploaded avatars and team backgrounds stay inside the snapshot for this MVP.</li></ul></div></div></div>';
+  }
+
   function render() {
     var app = document.getElementById("app");
     app.innerHTML = renderShell();
@@ -2170,8 +2485,8 @@
     var page = state.view === "home" ? renderHome() : state.view === "tournaments" ? renderTournaments() : state.view === "team" ? renderTeam() : state.view === "matches" ? renderMatches() : state.view === "data" ? renderDataView() : renderPlan();
     var team = activeTeam();
     return '<div class="app-shell" style="' + appShellStyle(team) + '">' +
-      '<div class="topbar"><div class="brand"><div class="logo">MP</div><div><h1>Captain Match Planner</h1><p>' + escapeHtml(team ? team.name : 'Team') + (t ? ' / ' + escapeHtml(t.name) : '') + '</p></div></div>' +
-      '<div class="top-actions"><div class="team-switcher"><label>Team</label><select onchange="app.setActiveTeam(this.value)">' + renderTeamOptions() + '</select></div><button class="btn secondary small" onclick="app.exportData()">Export</button><button class="btn secondary small" onclick="app.importDataPrompt()">Import</button></div></div>' +
+      '<div class="topbar"><div class="brand"><div class="logo">MP</div><div><h1>Coach Planner</h1><p>' + escapeHtml(team ? team.name : 'Team') + (t ? ' / ' + escapeHtml(t.name) : '') + '</p></div></div>' +
+      '<div class="top-actions">' + renderCloudStatusPill() + '<div class="team-switcher"><label>Team</label><select onchange="app.setActiveTeam(this.value)">' + renderTeamOptions() + '</select></div><button class="btn secondary small" onclick="app.exportData()">Export</button><button class="btn secondary small" onclick="app.importDataPrompt()">Import</button></div></div>' +
       page +
       '<div class="nav"><button class="' + navClass("home") + '" onclick="app.go(\'home\')">Home</button><button class="' + navClass("tournaments") + '" onclick="app.go(\'tournaments\')">Tournaments</button><button class="' + navClass("team") + '" onclick="app.go(\'team\')">Team</button><button class="' + navClass("matches") + '" onclick="app.go(\'matches\')">Matches</button></div>' +
       (state.toast ? '<div class="toast">' + escapeHtml(state.toast) + '</div>' : '') +
@@ -2180,6 +2495,7 @@
       (state.profilePlayerId ? renderPlayerProfileDrawer() : '') +
       (state.avatarTarget ? renderAvatarModal() : '') +
       (state.bulkRosterPreview ? renderBulkRosterImportModal() : '') +
+      renderCloudModal() +
       '</div>';
   }
   function navClass(view) { return state.view === view ? "active" : ""; }
@@ -2205,7 +2521,7 @@
     rows.slice(0, 20).forEach(function (row) { Object.keys(row || {}).forEach(function (key) { if (columns.indexOf(key) < 0) columns.push(key); }); });
     if (!columns.length) columns = ['id'];
     var buttons = stores.map(function (name) { var count = rowsForStore(name, data).length; return '<button class="data-table-btn ' + (name === table ? 'active' : '') + '" onclick="app.setDataTable(\'' + name + '\')"><span>' + escapeHtml(name) + '</span><strong>' + count + '</strong></button>'; }).join('');
-    return '<div class="grid data-page"><div class="card"><div class="row space"><div><div class="eyebrow">Local database</div><h2>Data</h2><div class="subtext">Read-only view of the current IndexedDB/local data. Use this to verify what the app has saved.</div></div><a class="btn secondary small link-btn" href="database-check.html" target="_blank">Open full page</a></div></div>' +
+    return '<div class="grid data-page">' + renderCloudWorkspacePanel(false) + '<div class="card"><div class="row space"><div><div class="eyebrow">Local database</div><h2>Data</h2><div class="subtext">Read-only view of the current IndexedDB/local data. Use this to verify what the app has saved.</div></div><a class="btn secondary small link-btn" href="database-check.html" target="_blank">Open full page</a></div></div>' +
       '<div class="data-layout"><div class="card data-sidebar"><h3>Tables</h3><div class="data-table-list">' + buttons + '</div></div>' +
       '<div class="card data-table-card"><div class="row space"><div><h3>' + escapeHtml(table) + '</h3><div class="subtext">' + rows.length + ' records</div></div></div><div class="data-table-wrap"><table><thead><tr>' + columns.map(function (c) { return '<th>' + escapeHtml(c) + '</th>'; }).join('') + '</tr></thead><tbody>' + (rows.length ? rows.map(function (row) { return '<tr>' + columns.map(function (c) { return '<td>' + formatCellValue(row[c]) + '</td>'; }).join('') + '</tr>'; }).join('') : '<tr><td colspan="' + columns.length + '">No rows saved for this table.</td></tr>') + '</tbody></table></div></div></div></div>';
   }
@@ -2218,6 +2534,7 @@
     var nextCta = next ? '<button class="btn hero-btn" onclick="app.openMatch(\'' + next.id + '\')">Plan next match</button>' : '<button class="btn hero-btn" onclick="app.go(\'tournaments\')">Create schedule</button>';
     var nextMeta = next ? metaParts(next) : [];
     return '<div class="grid home-compact">' +
+      renderCloudWorkspacePanel(true) +
       '<div class="home-hero card"><a class="data-check-pill" href="database-check.html" target="_blank" rel="noopener">Data check</a><div><div class="eyebrow light">Next match</div><h2>' + escapeHtml(t.teamName || 'Team') + '</h2>' +
         (next ? '<div class="home-next-date"><span>' + escapeHtml(formatLongDate(next.date)) + '</span>' + (next.time ? '<strong>' + escapeHtml(next.time) + '</strong>' : '') + '</div>' : '<p>No confirmed upcoming match.</p>') +
         (next && nextMeta.length ? '<div class="home-meta-line">' + nextMeta.map(function (x) { return '<span>' + escapeHtml(x) + '</span>'; }).join('') + '</div>' : '') +
@@ -3372,6 +3689,12 @@
   function escapeAttr(str) { return escapeHtml(str).replace(/`/g, '&#096;'); }
 
   window.app = {
+    openCloudPanel: function () { state.cloudPanelOpen = true; render(); },
+    closeCloudPanel: function () { state.cloudPanelOpen = false; render(); },
+    accessCloudWorkspace: accessCloudWorkspace,
+    refreshFromCloud: function () { return refreshFromCloud(false); },
+    saveToCloud: function () { return saveToCloud(false); },
+    signOutCloud: signOutCloud,
     go: function (view) { if (view === 'matches' && state.lastPlanMatchId && data.matches.find(function (m) { return m.id === state.lastPlanMatchId; })) { this.openMatch(state.lastPlanMatchId); return; } state.view = view; if (view === "home" || view === "tournaments" || view === "matches") syncActiveTournamentToPreferred(false); render(); },
     openMatchesOverview: function () { state.view = 'matches'; state.lastPlanMatchId = null; syncActiveTournamentToPreferred(false); render(); },
     setActiveTeam: function (teamId) { var tm = teamById(teamId); if (!tm) return; state.activeTeamId = tm.id; state.activeTournamentId = preferredTournamentId() || (teamTournaments(tm.id)[0] && teamTournaments(tm.id)[0].id); var m = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null; state.activeMatchId = m && m.id; state.lastPlanMatchId = null; state.view = 'home'; save(); render(); },
@@ -3515,6 +3838,13 @@
     exportData: function () { var backup = { exportFormat: 'captain-match-planner-local-snapshot', appVersion: APP_VERSION, schemaVersion: DB_SCHEMA_VERSION, storageBackend: state.storageBackend, exportedAt: nowIso(), data: clone(data) }; var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }); var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'captain-match-planner-v' + APP_VERSION.replace(/\./g, '_') + '-backup.json'; a.click(); URL.revokeObjectURL(a.href); },
     importDataPrompt: function () { var input = document.createElement('input'); input.type = 'file'; input.accept = '.json,application/json'; input.onchange = function () { var file = input.files[0]; if (!file) return; var reader = new FileReader(); reader.onload = function () { try { var parsed = JSON.parse(reader.result); var incoming = parsed && parsed.data && parsed.exportFormat ? parsed.data : parsed; data = migrateData(incoming); state.activeTeamId = preferredTeamId(); data.tournaments.forEach(function (t) { reconcileTournamentSchedule(t.id); }); state.activeTournamentId = preferredTournamentId() || (teamTournaments(state.activeTeamId)[0] && teamTournaments(state.activeTeamId)[0].id) || (data.tournaments[0] && data.tournaments[0].id); var importedNext = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null; state.activeMatchId = importedNext ? importedNext.id : (data.matches[0] && data.matches[0].id); save().then(function () { render(); toast('Data imported into local database.'); }); } catch (e) { alert('Invalid JSON backup.'); } }; reader.readAsText(file); }; input.click(); }
   };
+  window.addEventListener('beforeunload', function (event) {
+    if (state.cloud && state.cloud.mode === 'connected' && state.cloud.dirty) {
+      event.preventDefault();
+      event.returnValue = 'You have unsaved cloud changes.';
+      return event.returnValue;
+    }
+  });
   function fallbackCopy(text, message) { var ta = document.createElement('textarea'); ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.left = '-9999px'; ta.style.top = '0'; document.body.appendChild(ta); ta.focus(); ta.select(); var ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; } document.body.removeChild(ta); toast(ok ? (message || 'Copied.') : 'Copy failed. Select the text and copy manually.'); }
   initializeApp();
 })();

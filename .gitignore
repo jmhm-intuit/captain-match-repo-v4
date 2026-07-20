@@ -1,0 +1,6 @@
+.env
+.env.local
+.env.production
+supabase/.env
+supabase/functions/.env
+.DS_Store

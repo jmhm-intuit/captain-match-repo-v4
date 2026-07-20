@@ -1,7 +1,7 @@
 {
-  "name": "Captain Match Planner",
-  "short_name": "Match Planner",
-  "description": "Installable local multi-team 7v7 soccer match planner for captains.",
+  "name": "Coach Planner",
+  "short_name": "Coach Planner",
+  "description": "Shared multi-team 7v7 soccer coach planner with local backup and cloud snapshot sync.",
   "id": "./index.html",
   "start_url": "./index.html",
   "scope": "./",
@@ -34,7 +34,7 @@
     {
       "name": "Open Matches",
       "short_name": "Matches",
-      "description": "Open Captain Match Planner.",
+      "description": "Open Coach Planner.",
       "url": "./index.html",
       "icons": [{ "src": "./assets/icons/icon-192.png", "sizes": "192x192" }]
     },
