@@ -1,14 +1,14 @@
-# Coach Planner v7.01
+# Coach Planner v7.03
 
 Cloud Snapshot MVP for the multi-team 7v7 soccer coach planner.
 
-v7.01 is the first package connected to the validated Supabase Edge Function for this project. It keeps the local-first app experience, but adds a shared cloud workspace using Supabase. Local data still saves immediately on the device. Cloud sync is manual for MVP safety: **Save to Cloud** and **Refresh from Cloud**.
+v7.03 builds on the Supabase-connected v7 app to the validated Supabase Edge Function for this project. It keeps the local-first app experience, but adds a shared cloud workspace using Supabase. Local data still saves immediately on the device. Cloud sync is manual for MVP safety: **Save to Cloud** and **Refresh from Cloud**.
 
-## What changed in v7.01
+## What changed in v7.03
 
 - Preconfigures the public cloud endpoint in `cloud-config.js`:
   - `https://wfuxkbigfrmfjvkoxepb.supabase.co/functions/v1/coach-planner-snapshot`
-- Updates the app version to **7.01** and refreshes the PWA cache name.
+- Updates the app version to **7.03** and refreshes the PWA cache name.
 - Updates the included Edge Function so it does **not** return `password_hash` to the browser.
 - Adds service-role grant SQL to avoid `permission denied for table workspaces` during first setup.
 - Adds clearer first-time setup guidance inside the cloud workspace modal.
@@ -41,7 +41,7 @@ JWT verification: off
 CORS: working
 Create/access workspace: working
 Save/load snapshot: working
-password_hash exposed to browser: false after v7.01 function patch
+password_hash exposed to browser: false after v7.02+ function patch
 ```
 
 ## Supabase setup from scratch
@@ -105,7 +105,7 @@ This file is safe to commit because it contains only public, non-secret configur
 
 ## First-time app setup
 
-Use this flow after deploying v7.01 to GitHub Pages.
+Use this flow after deploying v7.03 to GitHub Pages.
 
 ### Main device with the latest local data
 
@@ -150,7 +150,7 @@ The app remains local-first. Edits save immediately to the current device, and o
 
 ## Conflict behavior
 
-v7.01 uses last-save-wins, but warns before overwriting if the cloud snapshot changed since the device loaded it.
+v7.03 uses last-save-wins, but warns before overwriting if the cloud snapshot changed since the device loaded it.
 
 If a conflict warning appears, the safer choice is usually:
 
@@ -161,7 +161,7 @@ Cancel → Refresh from Cloud → reapply your changes → Save to Cloud
 ## Local test
 
 ```bash
-cd captain-match-planner-v7_01-local
+cd captain-match-planner-v7_03-local
 python3 -m http.server 5177
 ```
 
@@ -180,15 +180,15 @@ cd ~/Documents/GitHub/captain-match-repo-v4
 
 git checkout main
 git pull
-git checkout -b update-v7-01
+git checkout -b update-v7-03
 
-# Copy the contents of captain-match-planner-v7_01-local into this repo folder.
+# Copy the contents of captain-match-planner-v7_03-local into this repo folder.
 # Keep the .git folder.
 
 git status
 git add .
-git commit -m "Update Coach Planner to v7.01 Supabase cloud connection"
-git push origin update-v7-01
+git commit -m "Update Coach Planner to v7.03 schedule cloud persistence"
+git push origin update-v7-03
 ```
 
 Then merge to main and push.
@@ -201,3 +201,19 @@ After deploy, hard refresh the browser. For the installed PWA, close and reopen 
 - `cloud-config.js` should contain only the public Edge Function URL.
 - Keep using Export backups before major cloud saves or migrations.
 - The cloud MVP is manual sync, not live multi-user collaboration.
+
+
+## v7.02/v7.03 updates
+
+- Match plans are now explicitly stamped as saved when generated or edited. Saved lineup/substitution plans stay inside the local database and Supabase cloud snapshot.
+- The Match Planner header and Matches list now show whether a saved plan exists.
+- Added a manual **Save plan** button for clarity; local saves still happen automatically and Save to Cloud publishes the saved plan to other devices.
+- Added the new centered soccer-field home background and made team backgrounds more visible so switching teams has stronger visual contrast.
+
+
+## v7.03 schedule persistence fix
+
+- Match schedule fields now use a dedicated schedule-save path: date, time, opponent, and field/location are stamped with `scheduleSavedAt` and protected from generated schedule cleanup.
+- Save to Cloud now flushes any visible match detail inputs before creating the Supabase snapshot, so values typed immediately before saving are included.
+- Cloud snapshots now include the selected team, tournament, and match UI state, so another device returns to the same team/match context after Refresh from Cloud.
+- No Supabase schema change is required; these fields live inside the existing `app_snapshots.data` JSON snapshot.

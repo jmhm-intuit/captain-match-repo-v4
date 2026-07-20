@@ -1,5 +1,5 @@
 /* Coach Planner PWA service worker */
-const CACHE_NAME = 'coach-planner-v7-01-cloud-snapshot-cache';
+const CACHE_NAME = 'coach-planner-v7-03-schedule-cloud-cache';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -11,6 +11,7 @@ const CORE_ASSETS = [
   './assets/soccer-background.png',
   './assets/field-background.png',
   './assets/team-backgrounds/intuit-united-blue.png',
+  './assets/team-backgrounds/home-match-field.png',
   './assets/icons/icon-192.png',
   './assets/icons/icon-512.png',
   './assets/icons/maskable-icon-512.png',

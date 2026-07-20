@@ -3,7 +3,7 @@
   var DB_NAME = "captain_match_planner_local_db";
   var DB_VERSION = 4;
   var DB_SCHEMA_VERSION = 10;
-  var APP_VERSION = "7.01";
+  var APP_VERSION = "7.03";
   var POS_KEYS = ["forward", "wing", "center", "defense", "goalie"];
   var POS_SHORT = { forward: "FWD", wing: "WNG", center: "CTR", defense: "DEF", goalie: "GK" };
   var POS_FULL = { forward: "Forward", wing: "Wing", center: "Center", defense: "Defense", goalie: "Goalie" };
@@ -214,22 +214,41 @@
     });
   }
   function cloudSnapshotPayload() {
+    flushPendingScheduleInputs();
     return {
       exportFormat: "captain-match-planner-cloud-snapshot",
       appVersion: APP_VERSION,
       schemaVersion: DB_SCHEMA_VERSION,
       exportedAt: nowIso(),
+      ui: {
+        activeTeamId: state.activeTeamId,
+        activeTournamentId: state.activeTournamentId,
+        activeMatchId: state.activeMatchId,
+        lastPlanMatchId: state.lastPlanMatchId
+      },
       data: clone(data)
     };
   }
   function applySnapshotFromCloud(snapshot) {
     if (!snapshot || !snapshot.data) return Promise.resolve(false);
+    var ui = snapshot.ui || snapshot.activeUi || {};
     data = migrateData(snapshot.data);
-    state.activeTeamId = preferredTeamId();
     data.tournaments.forEach(function (t) { reconcileTournamentSchedule(t.id); });
-    state.activeTournamentId = preferredTournamentId() || (teamTournaments(state.activeTeamId)[0] && teamTournaments(state.activeTeamId)[0].id) || (data.tournaments[0] && data.tournaments[0].id);
+    var restoredTeam = ui.activeTeamId && data.teams.find(function (tm) { return tm.id === ui.activeTeamId; });
+    state.activeTeamId = restoredTeam ? restoredTeam.id : preferredTeamId();
+    var restoredTournament = ui.activeTournamentId && data.tournaments.find(function (t) { return t.id === ui.activeTournamentId && (!state.activeTeamId || t.teamId === state.activeTeamId); });
+    state.activeTournamentId = restoredTournament ? restoredTournament.id : (preferredTournamentId() || (teamTournaments(state.activeTeamId)[0] && teamTournaments(state.activeTeamId)[0].id) || (data.tournaments[0] && data.tournaments[0].id));
+    var restoredMatch = ui.activeMatchId && data.matches.find(function (m) { return m.id === ui.activeMatchId; });
     var cloudNext = state.activeTournamentId ? nextMatch(state.activeTournamentId) : null;
-    state.activeMatchId = cloudNext ? cloudNext.id : (data.matches[0] && data.matches[0].id);
+    state.activeMatchId = restoredMatch ? restoredMatch.id : (cloudNext ? cloudNext.id : (data.matches[0] && data.matches[0].id));
+    state.lastPlanMatchId = ui.lastPlanMatchId || state.activeMatchId || state.lastPlanMatchId;
+    if (restoredMatch) {
+      var rt = data.tournaments.find(function (t) { return t.id === restoredMatch.tournamentId; });
+      if (rt) {
+        state.activeTournamentId = rt.id;
+        if (rt.teamId) state.activeTeamId = rt.teamId;
+      }
+    }
     state.cloudApplying = true;
     return save({ skipCloudDirty: true }).then(function () {
       state.cloudApplying = false;
@@ -594,11 +613,12 @@
   function ensureTournamentPlayerFromTeam(tId, teamPlayerRow) { var t = data.tournaments.find(function (x) { return x.id === tId; }); if (!t || !teamPlayerRow || teamPlayerRow.active === false) return null; var existing = data.tournamentPlayers.find(function (tp) { return tp.tournamentId === tId && tp.globalPlayerId === teamPlayerRow.globalPlayerId; }); var skills = clone(teamPlayerRow.skills || (globalPlayer(teamPlayerRow.globalPlayerId) && globalPlayer(teamPlayerRow.globalPlayerId).defaultSkills) || defaultSkills()); if (existing) { existing.active = true; existing.membership = teamPlayerRow.membership || existing.membership; existing.skills = normalizeSkills(existing.skills || skills); existing.teamId = t.teamId; return existing; } var tpId = uid('tp'); var pos = derivePositions(skills, tId, tpId); var gp = globalPlayer(teamPlayerRow.globalPlayerId); var tp = { id: tpId, teamId: t.teamId, tournamentId: tId, globalPlayerId: teamPlayerRow.globalPlayerId, membership: teamPlayerRow.membership || 'support', skills: skills, primaryPosition: pos.primary, secondaryPosition: pos.secondary, goalieEligible: skills.goalie >= 3, tournamentGoalie: gp && /franco/i.test(gp.name) && skills.goalie >= 3, active: true, createdAt: nowIso(), updatedAt: nowIso() }; data.tournamentPlayers.push(tp); return tp; }
   function activeTeams() { return (data.teams || []).filter(function (tm) { return tm.active !== false; }).slice(0, 5); }
   function teamBackground(team) { return (team && (team.backgroundDataUrl || team.backgroundSrc)) || ''; }
+  function defaultTeamBackground() { return 'assets/team-backgrounds/home-match-field.png'; }
   function normalizeHexColor(color, fallback) { color = String(color || '').trim(); if (/^#[0-9a-f]{6}$/i.test(color)) return color; return fallback || '#1769ff'; }
   function hexToRgb(color) { color = normalizeHexColor(color, '#1769ff').replace('#',''); return { r: parseInt(color.slice(0,2),16), g: parseInt(color.slice(2,4),16), b: parseInt(color.slice(4,6),16) }; }
   function darkenHex(color, factor) { var rgb = hexToRgb(color); factor = factor == null ? .58 : factor; function c(v){ return Math.max(0, Math.min(255, Math.round(v * factor))).toString(16).padStart(2,'0'); } return '#' + c(rgb.r) + c(rgb.g) + c(rgb.b); }
   function rgbaFromHex(color, alpha) { var rgb = hexToRgb(color); return 'rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ',' + alpha + ')'; }
-  function appShellStyle(team) { var color = normalizeHexColor(team && team.color, '#1769ff'); var bg = teamBackground(team); var safeBg = String(bg || '').replace(/"/g, '%22'); var bgCss = safeBg ? 'url(' + safeBg + ')' : 'none'; return '--blue:' + color + ';--blue2:' + darkenHex(color,.52) + ';--team-color:' + color + ';--team-soft:' + rgbaFromHex(color,.13) + ';--team-bg-image:' + bgCss + ';'; }
+  function appShellStyle(team) { var color = normalizeHexColor(team && team.color, '#1769ff'); var bg = teamBackground(team) || defaultTeamBackground(); var safeBg = String(bg || '').replace(/"/g, '%22'); var bgCss = safeBg ? 'url(' + safeBg + ')' : 'url(assets/team-backgrounds/home-match-field.png)'; return '--blue:' + color + ';--blue2:' + darkenHex(color,.52) + ';--team-color:' + color + ';--team-soft:' + rgbaFromHex(color,.13) + ';--team-bg-image:' + bgCss + ';'; }
   function soccerExperienceMeta(value) { value = value || 'lifelong'; var map = { lt5: { label:'Learning years', detail:'Less than 5 years', icon:'🌱' }, fiveTen: { label:'Experienced', detail:'5 to 10 years', icon:'⚽' }, lifelong: { label:'Lifelong player', detail:'All my life', icon:'🏆' } }; return map[value] || map.lifelong; }
   function runningCapacityMeta(value) { value = value || '45'; var map = { low: { label:'Low engine', detail:'Not much', icon:'🪫', level:1 }, m15: { label:'15 min engine', detail:'15 min non-stop', icon:'🔋', level:2 }, m30: { label:'30 min engine', detail:'30 min', icon:'🔋🔋', level:3 }, m45: { label:'45 min engine', detail:'45 min', icon:'🔋🔋🔋', level:4 }, plus45: { label:'45+ engine', detail:'More than 45 min', icon:'⚡', level:5 } }; return map[value] || map.m45; }
   function ensureGlobalPlayerTraits(gp) { if (!gp) return; gp.soccerExperience = gp.soccerExperience || 'lifelong'; gp.runningCapacity = gp.runningCapacity || 'm45'; }
@@ -1071,8 +1091,8 @@
     d.teams = Array.isArray(d.teams) ? d.teams : [];
     d.teamPlayers = Array.isArray(d.teamPlayers) ? d.teamPlayers : [];
     var green = d.teams.find(function (tm) { return tm.id === 'team_green_fc' || tm.name === 'Green FC'; });
-    if (!green) { green = { id: 'team_green_fc', name: 'Green FC', color: '#0b5d3b', colorName: 'Forest Green', backgroundSrc: 'assets/soccer-background.png', active: true, createdAt: nowIso(), updatedAt: nowIso() }; d.teams.push(green); }
-    green.id = green.id || 'team_green_fc'; green.name = green.name || 'Green FC'; green.color = green.color || '#0b5d3b'; green.colorName = green.colorName || 'Forest Green'; green.backgroundSrc = green.backgroundSrc || 'assets/soccer-background.png'; green.active = green.active !== false;
+    if (!green) { green = { id: 'team_green_fc', name: 'Green FC', color: '#0b5d3b', colorName: 'Forest Green', backgroundSrc: 'assets/team-backgrounds/home-match-field.png', active: true, createdAt: nowIso(), updatedAt: nowIso() }; d.teams.push(green); }
+    green.id = green.id || 'team_green_fc'; green.name = green.name || 'Green FC'; green.color = green.color || '#0b5d3b'; green.colorName = green.colorName || 'Forest Green'; if (!green.backgroundDataUrl && (!green.backgroundSrc || green.backgroundSrc === 'assets/soccer-background.png')) green.backgroundSrc = defaultTeamBackground(); green.active = green.active !== false;
     var intuit = d.teams.find(function (tm) { return tm.id === 'team_intuit_united' || tm.name === 'Intuit United' || tm.name === 'Intuit United FC'; });
     if (!intuit) { intuit = { id: 'team_intuit_united', name: 'Intuit United FC', color: '#1769ff', colorName: 'Blue', backgroundSrc: 'assets/team-backgrounds/intuit-united-blue.png', active: true, createdAt: nowIso(), updatedAt: nowIso() }; d.teams.push(intuit); }
     intuit.id = intuit.id || 'team_intuit_united'; intuit.name = 'Intuit United FC'; intuit.color = intuit.color || '#1769ff'; intuit.colorName = intuit.colorName || 'Blue'; intuit.backgroundSrc = intuit.backgroundSrc || 'assets/team-backgrounds/intuit-united-blue.png'; intuit.active = intuit.active !== false;
@@ -1170,6 +1190,7 @@
       if (m.title && /^vs\s+/i.test(m.title) && m.opponent) m.title = "Match";
       normalizeFormationLineup(m);
       applyFinalPhaseMode(m, m.finalPhase, true);
+      if (m.planSavedAt === undefined) m.planSavedAt = hasSavedPlan(m) ? (m.updatedAt || m.createdAt || nowIso()) : '';
     });
     d.tournaments.forEach(function (t) { syncTournamentRosterFromTeam(t.id); });
     return d;
@@ -1218,6 +1239,64 @@
   function hasLineupData(m) {
     return !!(m && m.lineup && Object.keys(m.lineup).some(function (k) { return !!m.lineup[k]; }));
   }
+  function hasSavedPlan(m) {
+    return !!(m && (m.planSavedAt || hasLineupData(m) || ((m.subs || []).length > 0)));
+  }
+  function scheduleFields() { return ['date', 'time', 'opponent', 'location']; }
+  function setMatchScheduleField(match, field, value) {
+    if (!match || scheduleFields().indexOf(field) < 0) return false;
+    value = String(value == null ? '' : value);
+    if (String(match[field] == null ? '' : match[field]) === value) return false;
+    match[field] = value;
+    match.scheduleSavedAt = nowIso();
+    match.generatedFromTournament = false;
+    if (field === 'date') match.sequenceLocked = true;
+    match.updatedAt = nowIso();
+    return true;
+  }
+  function flushPendingScheduleInputs() {
+    if (typeof document === 'undefined') return false;
+    var changed = false;
+    var touchedTournaments = {};
+    var nodes = document.querySelectorAll('[data-match-id][data-match-field]');
+    Array.prototype.forEach.call(nodes, function (node) {
+      var matchId = node.getAttribute('data-match-id');
+      var field = node.getAttribute('data-match-field');
+      var match = data.matches.find(function (m) { return m.id === matchId; });
+      if (setMatchScheduleField(match, field, node.value || '')) {
+        changed = true;
+        if (match && match.tournamentId) touchedTournaments[match.tournamentId] = true;
+      }
+    });
+    Object.keys(touchedTournaments).forEach(function (tId) {
+      renumberTournamentMatches(tId);
+      var t = data.tournaments.find(function (x) { return x.id === tId; });
+      if (t) t.weekCount = tournamentWeeks(tId).length;
+    });
+    return changed;
+  }
+  function planSavedText(m) {
+    if (!m || !hasSavedPlan(m)) return 'No saved plan yet';
+    return 'Saved plan' + (m.planSavedAt ? ' · ' + formatDateTime(m.planSavedAt) : '');
+  }
+  function planCloudHint() {
+    return state.cloud && state.cloud.mode === 'connected' ? 'Saved locally. Use Save to Cloud so other devices get this plan.' : 'Saved locally on this device.';
+  }
+  function recordPlanChange(match) {
+    if (!match) return;
+    var ts = nowIso();
+    match.status = 'planned';
+    match.showMinutes = true;
+    match.planSavedAt = ts;
+    match.updatedAt = ts;
+  }
+  function clearSavedPlanStamp(match) {
+    if (!match) return;
+    match.planSavedAt = '';
+    match.showMinutes = false;
+    if (match.status === 'planned') match.status = 'draft';
+    match.updatedAt = nowIso();
+  }
   function hasLiveFinalWindow(match) {
     return !!(match && (match.subWindows || []).some(function (w) { return !!w.live && Number(w.minute || 0) >= 37; }));
   }
@@ -1260,7 +1339,7 @@
     if (!m) return false;
     var allMatchPlayers = matchPlayersOverride || ((typeof data !== 'undefined' && data && data.matchPlayers) ? data.matchPlayers : []);
     if (m.sequenceLocked) return true;
-    if (m.opponent || m.time || m.rawRosterText) return true;
+    if (m.opponent || m.time || m.location || m.scheduleSavedAt || m.rawRosterText) return true;
     if (m.scoreFor !== null && m.scoreFor !== undefined) return true;
     if (m.scoreAgainst !== null && m.scoreAgainst !== undefined) return true;
     if (m.status === 'planned' || m.status === 'completed') return true;
@@ -1553,9 +1632,7 @@
     if (goalie) lineup.GK = goalie.matchPlayer.id;
     Object.keys(best.assign).forEach(function (pos) { lineup[pos] = best.assign[pos]; });
     match.lineup = lineup;
-    match.status = "planned";
-    match.showMinutes = true;
-    match.updatedAt = nowIso();
+    recordPlanChange(match);
     save();
     render();
     toast(mode === "signup" ? "Sign-up order lineup suggested." : "Positional lineup suggested.");
@@ -1902,6 +1979,7 @@
     match.subWindows = clone(TEMPLATES[key] || TEMPLATES.balanced);
     applyFinalPhaseMode(match, match.finalPhase || "live", true);
     match.subs = [];
+    recordPlanChange(match);
     save(); render(); toast("Sub windows updated.");
   }
   function addWindow(matchId) {
@@ -1909,6 +1987,7 @@
     if (!match) return;
     match.subTiming = "custom";
     match.subWindows.push({ id: uid("w"), label: "Custom window", minute: 25, live: false, targetSubs: "" });
+    recordPlanChange(match);
     save(); render();
   }
   function updateWindow(matchId, windowId, field, value) {
@@ -1919,6 +1998,7 @@
     if (field === "targetSubs") value = value === "" ? "" : Number(value || 0);
     if (field === "live") value = !!value;
     w[field] = value;
+    recordPlanChange(match);
     save(); render();
   }
   function deleteWindow(matchId, windowId) {
@@ -1926,6 +2006,7 @@
     if (!match) return;
     match.subWindows = match.subWindows.filter(function (w) { return w.id !== windowId; });
     match.subs = match.subs.filter(function (s) { return s.windowId !== windowId; });
+    recordPlanChange(match);
     save(); render();
   }
   function subFit(ctx, position, formation) {
@@ -2038,6 +2119,7 @@
     var initialBench = benchPlayersForLineup(match, lineupFor(match));
     if (!initialBench.length) {
       match.subs = [];
+      recordPlanChange(match);
       save(); render(); toast("No bench players for subs.");
       return;
     }
@@ -2113,6 +2195,7 @@
     });
     match.subs = plan.sort(function (a, b) { var wa = (match.subWindows || []).find(function (w) { return w.id === a.windowId; }); var wb = (match.subWindows || []).find(function (w) { return w.id === b.windowId; }); return Number(wa && wa.minute || 0) - Number(wb && wb.minute || 0) || (a.order || 0) - (b.order || 0); });
     if ((match.subWindows || []).some(function (w) { return w.live; })) match.strategyNote = match.strategyNote || defaultStrategyNote();
+    recordPlanChange(match);
     save(); render(); toast((switchedHeavy ? "Heavy rotation applied. " : "") + "Substitution plan suggested with " + config.label.toLowerCase() + " rotation.");
   }
 
@@ -2152,6 +2235,7 @@
     placeholder.playerOutId = choice.playerOutId;
     placeholder.position = choice.position;
     match.subs.push(placeholder);
+    recordPlanChange(match);
     save(); render();
   }
   function updateSub(matchId, subId, field, value) {
@@ -2169,12 +2253,14 @@
       if (pos) sub.position = pos;
       sub.manualPosition = false;
     }
+    recordPlanChange(match);
     save(); render();
   }
   function deleteSub(matchId, subId) {
     var match = data.matches.find(function (m) { return m.id === matchId; });
     if (!match) return;
     match.subs = match.subs.filter(function (s) { return s.id !== subId; });
+    recordPlanChange(match);
     save(); render();
   }
   function estimateMinutesBundle(match) {
@@ -2230,6 +2316,7 @@
     data.matchPlayers = data.matchPlayers.filter(function (p) { return p.matchId !== matchId; });
     match.lineup = {};
     match.subs = [];
+    match.planSavedAt = '';
     parsed.forEach(function (row, index) {
       var found = findRosterMatch(row.name, match.tournamentId);
       var mp = { id: uid("mp"), matchId: matchId, tournamentPlayerId: null, globalPlayerId: null, name: row.name, normalizedName: row.normalized, status: "confirmed", matchType: "new", availability: row.availability, probability: row.probability, included: row.availability !== "out", signupOrder: index + 1, raw: row.raw, suggestedTournamentPlayerId: null, avatarId: AVATARS[index % AVATARS.length].id, temporarySkills: defaultSkills(), createdAt: nowIso() };
@@ -2251,6 +2338,7 @@
     summary.outIgnored = parsed.outIgnoredCount || 0;
     match.matchImportSummary = summary;
     match.status = "draft";
+    match.planSavedAt = '';
     match.updatedAt = nowIso();
     save(); render(); toast("Roster imported: " + summary.team + " team, " + summary.support + " support, " + summary.newPlayers + " new, " + summary.outIgnored + " out ignored.");
   }
@@ -2399,17 +2487,20 @@
   }
   function saveToCloud(force) {
     if (state.cloud.mode !== 'connected' || !state.cloud.token) return toast('Connect to a workspace first.');
+    flushPendingScheduleInputs();
     state.cloud.saving = true;
     state.cloud.error = '';
     render();
-    return cloudRequest('save', {
-      token: state.cloud.token,
-      snapshot: cloudSnapshotPayload(),
-      appVersion: APP_VERSION,
-      schemaVersion: DB_SCHEMA_VERSION,
-      clientKnownUpdatedAt: state.cloud.remoteUpdatedAt || state.cloud.loadedAt || '',
-      force: !!force,
-      deviceId: state.cloud.deviceId || cloudDeviceId()
+    return save({ skipCloudDirty: true }).then(function () {
+      return cloudRequest('save', {
+        token: state.cloud.token,
+        snapshot: cloudSnapshotPayload(),
+        appVersion: APP_VERSION,
+        schemaVersion: DB_SCHEMA_VERSION,
+        clientKnownUpdatedAt: state.cloud.remoteUpdatedAt || state.cloud.loadedAt || '',
+        force: !!force,
+        deviceId: state.cloud.deviceId || cloudDeviceId()
+      });
     }).then(function (resp) {
       setCloudFromResponse(resp);
       state.cloud.saving = false;
@@ -2537,11 +2628,11 @@
       renderCloudWorkspacePanel(true) +
       '<div class="home-hero card"><a class="data-check-pill" href="database-check.html" target="_blank" rel="noopener">Data check</a><div><div class="eyebrow light">Next match</div><h2>' + escapeHtml(t.teamName || 'Team') + '</h2>' +
         (next ? '<div class="home-next-date"><span>' + escapeHtml(formatLongDate(next.date)) + '</span>' + (next.time ? '<strong>' + escapeHtml(next.time) + '</strong>' : '') + '</div>' : '<p>No confirmed upcoming match.</p>') +
-        (next && nextMeta.length ? '<div class="home-meta-line">' + nextMeta.map(function (x) { return '<span>' + escapeHtml(x) + '</span>'; }).join('') + '</div>' : '') +
+        (next ? '<div class="home-meta-line">' + nextMeta.map(function (x) { return '<span>' + escapeHtml(x) + '</span>'; }).join('') + renderPlanMiniBadge(next) + '</div>' : '') +
         '<div class="hero-actions">' + nextCta + '<button class="btn secondary" onclick="app.go(\'matches\')">All matches</button></div></div>' +
         '<div class="home-count"><small>' + escapeHtml(t.name || 'Tournament') + '</small><strong>' + left.length + '</strong><span>matches left</span></div></div>' +
       '<div class="card remaining-card"><div class="row space"><div><h2>Matches left in ' + escapeHtml(t.name || 'Tournament') + '</h2><div class="subtext">Confirmed matches only. Date, time, and field come from the Tournament or Matches sections.</div></div><button class="btn secondary" onclick="app.go(\'tournaments\')">Edit tournament</button></div>' +
-        (left.length ? '<div class="remaining-list">' + left.map(function (m, i) { var meta = []; if (m.time) meta.push(m.time); if (m.location) meta.push(m.location); if (m.opponent) meta.push('vs ' + m.opponent); return '<button class="remaining-row" onclick="app.openMatch(\'' + m.id + '\')"><div><span>' + escapeHtml(matchDisplayTitle(m)) + '</span><strong>' + escapeHtml(formatLongDate(m.date)) + '</strong></div>' + (meta.length ? '<small>' + escapeHtml(meta.join(' · ')) + '</small>' : '') + '</button>'; }).join('') + '</div>' : '<div class="empty-state">No confirmed matches left in the current tournament.</div>') + '</div>' +
+        (left.length ? '<div class="remaining-list">' + left.map(function (m, i) { var meta = []; if (m.time) meta.push(m.time); if (m.location) meta.push(m.location); if (m.opponent) meta.push('vs ' + m.opponent); return '<button class="remaining-row" onclick="app.openMatch(\'' + m.id + '\')"><div><span>' + escapeHtml(matchDisplayTitle(m)) + '</span><strong>' + escapeHtml(formatLongDate(m.date)) + '</strong><em>' + escapeHtml(hasSavedPlan(m) ? 'Saved plan' : 'No saved plan') + '</em></div>' + (meta.length ? '<small>' + escapeHtml(meta.join(' · ')) + '</small>' : '') + '</button>';  }).join('') + '</div>' : '<div class="empty-state">No confirmed matches left in the current tournament.</div>') + '</div>' +
       '<div class="card team-home-management"><div class="row space"><div><div class="eyebrow">Team management</div><h2>' + escapeHtml(activeTeam().name || 'Team') + '</h2><div class="subtext">Teams are created from Home. Current team branding controls the app color and team page background.</div></div><button class="btn secondary" onclick="app.createTeamPrompt()">+ Add team</button></div></div>' +
       '<div class="app-version">App v' + APP_VERSION + ' · ' + escapeHtml(storageStatusLabel()) + ' · Last updated ' + escapeHtml(formatDateTime(state.lastSavedAt)) + '</div></div>';
   }
@@ -2593,7 +2684,7 @@
       var defaultTime = index === 0 ? '19:00' : (w.matches[index - 1] && w.matches[index - 1].time ? addHoursToTime(w.matches[index - 1].time, 1) : '20:00');
       var status = isDouble ? '<span class="badge warn">Double header</span>' : '';
       if (m.sequenceLocked) status += '<span class="badge team">Rescheduled</span>';
-      return '<div class="schedule-card-row schedule-summary-row ' + (isDouble ? 'schedule-double' : '') + ' ' + (isPastMatch(m) ? 'schedule-past' : '') + '"><div><strong>W' + w.index + '</strong></div><div><strong>' + escapeHtml(matchScheduleLabel(m)) + '</strong>' + status + '</div><div><input type="date" value="' + escapeAttr(m.date || '') + '" onchange="app.updateMatch(\'' + m.id + '\',\'date\',this.value)"></div><div>' + timeInputHtml(m.id, m.time, defaultTime) + '</div><div class="row compact-actions"><button class="btn small" onclick="app.openMatch(\'' + m.id + '\')">Plan</button><button class="btn small secondary" onclick="app.addMatchOnDate(\'' + t.id + '\',\'' + w.date + '\')">Double</button><button class="btn small ghost" onclick="app.shiftFutureMatches(\'' + t.id + '\',\'' + w.date + '\')">Push +1wk</button></div></div>';
+      return '<div class="schedule-card-row schedule-summary-row ' + (isDouble ? 'schedule-double' : '') + ' ' + (isPastMatch(m) ? 'schedule-past' : '') + '"><div><strong>W' + w.index + '</strong></div><div><strong>' + escapeHtml(matchScheduleLabel(m)) + '</strong>' + status + '</div><div><input type="date" value="' + escapeAttr(m.date || '') + '" data-match-id="' + escapeAttr(m.id) + '" data-match-field="date" onchange="app.updateMatch(\'' + m.id + '\',\'date\',this.value)"></div><div>' + timeInputHtml(m.id, m.time, defaultTime) + '</div><div class="row compact-actions"><button class="btn small" onclick="app.openMatch(\'' + m.id + '\')">Plan</button><button class="btn small secondary" onclick="app.addMatchOnDate(\'' + t.id + '\',\'' + w.date + '\')">Double</button><button class="btn small ghost" onclick="app.shiftFutureMatches(\'' + t.id + '\',\'' + w.date + '\')">Push +1wk</button></div></div>';
     }).join('');
   }
   function renderScheduleWeekFull(w) {
@@ -2609,7 +2700,7 @@
       if (isDouble) status.push('<span class="badge warn">Double header' + (index > 0 ? ' 2' : '') + '</span>');
       if (isPastMatch(m)) status.push('<span class="badge">Past</span>');
       if (m.sequenceLocked) status.push('<span class="badge team">Rescheduled</span>');
-      return '<div class="schedule-card-row schedule-full-row ' + (isDouble ? 'schedule-double' : '') + ' ' + (isPastMatch(m) ? 'schedule-past' : '') + '"><div><strong>Week ' + w.index + '</strong></div><div><strong>' + escapeHtml(matchScheduleLabel(m)) + '</strong></div><div><input type="date" value="' + escapeAttr(m.date || '') + '" onchange="app.updateMatch(\'' + m.id + '\',\'date\',this.value)"></div><div>' + timeInputHtml(m.id, m.time, defaultTime) + '</div><div><input value="' + escapeAttr(m.opponent || '') + '" placeholder="Opponent" onchange="app.updateMatch(\'' + m.id + '\',\'opponent\',this.value)"></div><div><input value="' + escapeAttr(m.location || '') + '" placeholder="Field" onchange="app.updateMatch(\'' + m.id + '\',\'location\',this.value)"></div><div>' + status.join(' ') + '</div><div class="row compact-actions"><button class="btn small" onclick="app.openMatch(\'' + m.id + '\')">Plan</button><button class="btn small secondary" onclick="app.addMatchOnDate(\'' + t.id + '\',\'' + w.date + '\')">Double</button><button class="btn small ghost" onclick="app.skipWeek(\'' + t.id + '\',\'' + w.date + '\')">Skip</button><button class="btn small ghost" onclick="app.shiftFutureMatches(\'' + t.id + '\',\'' + w.date + '\')">Push +1wk</button></div></div>';
+      return '<div class="schedule-card-row schedule-full-row ' + (isDouble ? 'schedule-double' : '') + ' ' + (isPastMatch(m) ? 'schedule-past' : '') + '"><div><strong>Week ' + w.index + '</strong></div><div><strong>' + escapeHtml(matchScheduleLabel(m)) + '</strong></div><div><input type="date" value="' + escapeAttr(m.date || '') + '" data-match-id="' + escapeAttr(m.id) + '" data-match-field="date" onchange="app.updateMatch(\'' + m.id + '\',\'date\',this.value)"></div><div>' + timeInputHtml(m.id, m.time, defaultTime) + '</div><div><input value="' + escapeAttr(m.opponent || '') + '" data-match-id="' + escapeAttr(m.id) + '" data-match-field="opponent" placeholder="Opponent" onchange="app.updateMatch(\'' + m.id + '\',\'opponent\',this.value)"></div><div><input value="' + escapeAttr(m.location || '') + '" data-match-id="' + escapeAttr(m.id) + '" data-match-field="location" placeholder="Field" onchange="app.updateMatch(\'' + m.id + '\',\'location\',this.value)"></div><div>' + status.join(' ') + '</div><div class="row compact-actions"><button class="btn small" onclick="app.openMatch(\'' + m.id + '\')">Plan</button><button class="btn small secondary" onclick="app.addMatchOnDate(\'' + t.id + '\',\'' + w.date + '\')">Double</button><button class="btn small ghost" onclick="app.skipWeek(\'' + t.id + '\',\'' + w.date + '\')">Skip</button><button class="btn small ghost" onclick="app.shiftFutureMatches(\'' + t.id + '\',\'' + w.date + '\')">Push +1wk</button></div></div>';
     }).join('');
   }
   function addHoursToTime(time, hours) {
@@ -2624,7 +2715,7 @@
   function timeInputHtml(matchId, value, defaultTime) {
     var current = escapeAttr(value || "");
     var fallback = escapeAttr(defaultTime || "19:00");
-    return '<input type="time" value="' + current + '" data-default-time="' + fallback + '" onfocus="if(!this.value)this.value=this.dataset.defaultTime" onchange="app.updateMatch(\'' + matchId + '\',\'time\',this.value)">';
+    return '<input type="time" value="' + current + '" data-match-id="' + escapeAttr(matchId) + '" data-match-field="time" data-default-time="' + fallback + '" onfocus="if(!this.value)this.value=this.dataset.defaultTime" onchange="app.updateMatch(\'' + matchId + '\',\'time\',this.value)">';
   }
   function renderTournamentItem(t) {
     var count = matches(t.id).length;
@@ -2725,13 +2816,14 @@
   function renderMatchRow(m, isNext) {
     var past = isPastMatch(m) || m.status === "completed";
     var status = past && m.status !== "completed" ? 'past' : m.status;
+    var planBadge = hasSavedPlan(m) ? 'Saved plan' : 'No saved plan';
     return '<div class="match-row ' + (past ? 'past' : '') + ' ' + (isNext ? 'next' : '') + '">' +
-      '<div><button class="btn small" onclick="app.openMatch(\'' + m.id + '\')">Plan</button></div>' +
-      '<div><div class="player-title">' + escapeHtml(matchDisplayTitle(m)) + '</div><div class="subtext">' + escapeHtml(status || '') + '</div></div>' +
-      '<div><input type="date" value="' + escapeAttr(m.date || '') + '" onchange="app.updateMatch(\'' + m.id + '\',\'date\',this.value)"></div>' +
+      '<div><button class="btn small" onclick="app.openMatch(\'' + m.id + '\')">' + (hasSavedPlan(m) ? 'Open plan' : 'Plan') + '</button></div>' +
+      '<div><div class="player-title">' + escapeHtml(matchDisplayTitle(m)) + '</div><div class="subtext">' + escapeHtml((status || 'draft') + ' · ' + planBadge) + '</div></div>' +
+      '<div><input type="date" value="' + escapeAttr(m.date || '') + '" data-match-id="' + escapeAttr(m.id) + '" data-match-field="date" onchange="app.updateMatch(\'' + m.id + '\',\'date\',this.value)"></div>' +
       '<div>' + timeInputHtml(m.id, m.time) + '</div>' +
-      '<div><input value="' + escapeAttr(m.opponent || '') + '" placeholder="Opponent" onchange="app.updateMatch(\'' + m.id + '\',\'opponent\',this.value)"></div>' +
-      '<div><input value="' + escapeAttr(m.location || '') + '" placeholder="Field" onchange="app.updateMatch(\'' + m.id + '\',\'location\',this.value)"></div>' +
+      '<div><input value="' + escapeAttr(m.opponent || '') + '" data-match-id="' + escapeAttr(m.id) + '" data-match-field="opponent" placeholder="Opponent" onchange="app.updateMatch(\'' + m.id + '\',\'opponent\',this.value)"></div>' +
+      '<div><input value="' + escapeAttr(m.location || '') + '" data-match-id="' + escapeAttr(m.id) + '" data-match-field="location" placeholder="Field" onchange="app.updateMatch(\'' + m.id + '\',\'location\',this.value)"></div>' +
       '<div><select onchange="app.updateMatch(\'' + m.id + '\',\'formation\',this.value)"><option value="2-3-1" ' + (m.formation === '2-3-1' ? 'selected' : '') + '>2-3-1</option><option value="3-2-1" ' + (m.formation === '3-2-1' ? 'selected' : '') + '>3-2-1</option></select></div>' +
       '<div class="row right-actions"><button class="btn small secondary" onclick="app.duplicateMatch(\'' + m.id + '\')">Copy</button><button class="btn small danger" onclick="app.deleteMatch(\'' + m.id + '\')">Delete</button></div>' +
       '</div>';
@@ -2741,6 +2833,14 @@
     if (m.formation) parts.push('Formation ' + m.formation);
     return '<div class="player-title">' + escapeHtml(matchDisplayTitle(m)) + '</div><div class="subtext">' + escapeHtml(parts.join(' · ')) + '</div>';
   }
+  function renderPlanPersistenceNote(match) {
+    var saved = hasSavedPlan(match);
+    return '<div class="plan-save-note ' + (saved ? 'saved' : 'draft') + '"><span class="badge ' + (saved ? 'plan-saved' : 'plan-draft') + '">' + escapeHtml(saved ? planSavedText(match) : 'No saved plan yet') + '</span><span>' + escapeHtml(saved ? 'This match plan is stored in local data and is included in Save to Cloud snapshots.' : 'Build or auto-plan the match, then it will be stored and available next time.') + '</span></div>';
+  }
+  function renderPlanMiniBadge(match) {
+    if (!match) return '';
+    return '<span class="badge ' + (hasSavedPlan(match) ? 'plan-saved' : 'plan-draft') + '">' + escapeHtml(hasSavedPlan(match) ? 'Saved plan' : 'No saved plan') + '</span>';
+  }
   function renderPlan() {
     var match = activeMatch();
     if (!match) return '<div class="card empty-state">No match selected.</div>';
@@ -2748,7 +2848,7 @@
     var active = activeMatchPlayers(match.id);
     var bench = benchPlayers(match);
     return '<div class="wizard">' +
-      '<div class="card"><div class="row space"><div><h2>Match planner</h2>' + matchSummary(match) + '</div><button class="btn secondary" onclick="app.go(\'matches\')">Back to matches</button></div><div class="kpi" style="margin-top:12px"><div class="pill"><div class="num">' + active.length + '</div><div class="txt">Active players</div></div><div class="pill"><div class="num">' + Math.min(7, active.length) + '</div><div class="txt">Starters</div></div><div class="pill"><div class="num">' + bench.length + '</div><div class="txt">Bench</div></div></div></div>' +
+      '<div class="card plan-header-card"><div class="row space"><div><h2>Match planner</h2>' + matchSummary(match) + renderPlanPersistenceNote(match) + '</div><div class="row"><button class="btn green" onclick="app.saveMatchPlan()">Save plan</button><button class="btn secondary" onclick="app.go(\'matches\')">Back to matches</button></div></div><div class="kpi" style="margin-top:12px"><div class="pill"><div class="num">' + active.length + '</div><div class="txt">Active players</div></div><div class="pill"><div class="num">' + Math.min(7, active.length) + '</div><div class="txt">Starters</div></div><div class="pill"><div class="num">' + bench.length + '</div><div class="txt">Bench</div></div></div></div>' +
       renderStepImport(match, parsed) +
       renderStepConfirm(match) +
       renderStepFormation(match) +
@@ -3712,7 +3812,7 @@
     updateGlobalMembership: function (gpId, teamId, membership) { setGlobalMembership(gpId, teamId, membership); save(); render(); toast('Membership updated.'); },
     updateGlobalPlayerField: function (gpId, field, value) { var gp = globalPlayer(gpId); if (!gp) return; if (field === 'email') { gp.emails = Array.isArray(gp.emails) ? gp.emails : []; gp.email = normalizeEmail(value); if (gp.email && gp.emails.indexOf(gp.email) < 0) gp.emails.unshift(gp.email); } else if (field === 'soccerExperience') gp.soccerExperience = value || 'lifelong'; else if (field === 'runningCapacity') gp.runningCapacity = value || 'm45'; else gp[field] = value; gp.updatedAt = nowIso(); save(); render(); },
     uploadTeamBackground: function () { var tm = activeTeam(); var input = document.getElementById('teamBackgroundUpload'); var file = input && input.files && input.files[0]; if (!tm || !file) return toast('Choose a background image first.'); if (!/^image\//.test(file.type || '')) return toast('Please upload an image file.'); var reader = new FileReader(); reader.onload = function () { tm.backgroundDataUrl = reader.result; tm.backgroundSrc = ''; tm.updatedAt = nowIso(); save(); render(); toast('Team background updated.'); }; reader.readAsDataURL(file); },
-    clearTeamBackground: function () { var tm = activeTeam(); if (!tm) return; tm.backgroundDataUrl = ''; tm.backgroundSrc = tm.id === 'team_intuit_united' ? 'assets/team-backgrounds/intuit-united-blue.png' : 'assets/soccer-background.png'; tm.updatedAt = nowIso(); save(); render(); toast('Team background reset.'); },
+    clearTeamBackground: function () { var tm = activeTeam(); if (!tm) return; tm.backgroundDataUrl = ''; tm.backgroundSrc = tm.id === 'team_intuit_united' ? 'assets/team-backgrounds/intuit-united-blue.png' : defaultTeamBackground(); tm.updatedAt = nowIso(); save(); render(); toast('Team background reset.'); },
     deleteGlobalPlayer: function (gpId) { var gp = globalPlayer(gpId); if (!gp) return; if (teamPlayersForGlobal(gpId).length) return toast('Remove this player from all teams before deleting permanently.'); var typed = prompt('Delete permanently. Type the player name to confirm:', ''); if (typed !== gp.name) return toast('Delete cancelled.'); data.globalPlayers = data.globalPlayers.filter(function (p) { return p.id !== gpId; }); data.teamPlayers = data.teamPlayers.filter(function (p) { return p.globalPlayerId !== gpId; }); data.tournamentPlayers = data.tournamentPlayers.filter(function (p) { return p.globalPlayerId !== gpId; }); data.matchPlayers = data.matchPlayers.filter(function (p) { return p.globalPlayerId !== gpId; }); state.profilePlayerId = null; save(); render(); toast('Player deleted permanently.'); },
     resetData: resetData,
     setActiveTournament: function (id) { state.activeTournamentId = id; var t = data.tournaments.find(function (x) { return x.id === id; }); if (t && t.teamId) state.activeTeamId = t.teamId; syncTournamentRosterFromTeam(id); var m = nextMatch(id); state.activeMatchId = m && m.id; render(); },
@@ -3792,7 +3892,7 @@
     shiftFutureMatches: function (tId, date) { if (!confirm('Move this week and all future matches one week later? Match numbers will stay in order.')) return; matches(tId).filter(function (m) { return m.date && m.date >= date && m.status !== 'completed'; }).forEach(function (m) { m.date = addDays(m.date, 7); m.sequenceLocked = true; m.updatedAt = nowIso(); }); var t = data.tournaments.find(function (x) { return x.id === tId; }); if (t) { t.skipDates = skipDatesFor(t).map(function (d) { return d >= date ? addDays(d, 7) : d; }); t.updatedAt = nowIso(); } renumberTournamentMatches(tId); save(); render(); toast('Future schedule shifted one week.'); },
     addManualMatch: function () { var t = activeTournament(); var m = createMatchObject(t.id, nextWeekdayDate(t.defaultDay), '', ''); m.generatedFromTournament = false; data.matches.push(m); renumberTournamentMatches(t.id); state.activeMatchId = m.id; save(); render(); toast('Match added.'); },
     generateMoreMatches: function () { var t = activeTournament(); var count = Number(prompt('Confirmed matches target?', String(t.matchTarget || 7)) || t.matchTarget || 7); this.setTournamentTarget(t.id, count); },
-    updateMatch: function (matchId, field, value, rerender) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; var oldDate = m.date; m[field] = value; if (field === 'formation') { m.lineup = {}; m.subs = []; state.momentByMatch[matchId] = 'initial'; normalizeFormationLineup(m); } if (field === 'date') { var t = data.tournaments.find(function (x) { return x.id === m.tournamentId; }); if (oldDate && oldDate !== value) m.sequenceLocked = true; if (t) removeSkipDate(t, value); } if (field === 'date' || field === 'time' || field === 'opponent' || field === 'location') { renumberTournamentMatches(m.tournamentId); var tt = data.tournaments.find(function (x) { return x.id === m.tournamentId; }); if (tt) tt.weekCount = tournamentWeeks(m.tournamentId).length; } m.updatedAt = nowIso(); save(); if (rerender !== false) render(); },
+    updateMatch: function (matchId, field, value, rerender) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; var oldDate = m.date; var scheduleChanged = false; if (scheduleFields().indexOf(field) >= 0) { scheduleChanged = setMatchScheduleField(m, field, value); } else { m[field] = value; } if (field === 'formation') { m.lineup = {}; m.subs = []; clearSavedPlanStamp(m); state.momentByMatch[matchId] = 'initial'; normalizeFormationLineup(m); } else if (['suggestMode','rotationStyle','keeperPlan'].indexOf(field) >= 0) { recordPlanChange(m); } if (field === 'date') { var t = data.tournaments.find(function (x) { return x.id === m.tournamentId; }); if (oldDate && oldDate !== value) m.sequenceLocked = true; if (t) removeSkipDate(t, value); } if (field === 'date' || field === 'time' || field === 'opponent' || field === 'location') { renumberTournamentMatches(m.tournamentId); var tt = data.tournaments.find(function (x) { return x.id === m.tournamentId; }); if (tt) tt.weekCount = tournamentWeeks(m.tournamentId).length; } if (!scheduleChanged) m.updatedAt = nowIso(); save(); if (rerender !== false) render(); },
     setScore: function (matchId, field, value) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; m[field] = value === '' ? null : Number(value); if (m.scoreFor !== null && m.scoreFor !== undefined && m.scoreAgainst !== null && m.scoreAgainst !== undefined) { m.result = m.scoreFor > m.scoreAgainst ? 'W' : m.scoreFor < m.scoreAgainst ? 'L' : 'D'; m.status = 'completed'; } m.updatedAt = nowIso(); save(); render(); },
     duplicateMatch: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; var copy = clone(m); copy.id = uid('match'); copy.title = (copy.title || 'Match') + ' copy'; copy.date = addDays(copy.date, 0); copy.status = 'draft'; copy.lineup = {}; copy.subs = []; copy.generatedFromTournament = false; data.matches.push(copy); renumberTournamentMatches(copy.tournamentId); save(); render(); },
     deleteMatch: function (matchId) { if (!confirm('Delete this match?')) return; data.matches = data.matches.filter(function (m) { return m.id !== matchId; }); data.matchPlayers = data.matchPlayers.filter(function (p) { return p.matchId !== matchId; }); renumberTournamentMatches(state.activeTournamentId); if (state.activeMatchId === matchId) { var m = matches(state.activeTournamentId)[0]; state.activeMatchId = m && m.id; } save(); render(); },
@@ -3810,12 +3910,12 @@
     suggestLineup: suggestLineup,
     autoPlanMatch: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; suggestLineup(matchId, m.suggestMode || 'positional'); suggestSubs(matchId); toast('Auto match plan generated.'); },
     selectSlot: function (position) { state.activeSlot = state.activeSlot === position ? null : position; render(); },
-    assignSelected: function (mpId) { var match = activeMatch(); if (!match || !state.activeSlot) return toast('Select a field slot first.'); Object.keys(lineupFor(match)).forEach(function (pos) { if (match.lineup[pos] === mpId) delete match.lineup[pos]; }); match.lineup[state.activeSlot] = mpId; match.status = 'planned'; match.showMinutes = true; state.activeSlot = null; save(); render(); },
-    clearSlot: function (matchId, position) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; delete lineupFor(m)[position]; save(); render(); },
-    clearLineup: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; m.lineup = {}; m.subs = []; m.showMinutes = false; state.momentByMatch[matchId] = 'initial'; save(); render(); },
+    assignSelected: function (mpId) { var match = activeMatch(); if (!match || !state.activeSlot) return toast('Select a field slot first.'); Object.keys(lineupFor(match)).forEach(function (pos) { if (match.lineup[pos] === mpId) delete match.lineup[pos]; }); match.lineup[state.activeSlot] = mpId; recordPlanChange(match); state.activeSlot = null; save(); render(); },
+    clearSlot: function (matchId, position) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; delete lineupFor(m)[position]; hasLineupData(m) || (m.subs || []).length ? recordPlanChange(m) : clearSavedPlanStamp(m); save(); render(); },
+    clearLineup: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; m.lineup = {}; m.subs = []; clearSavedPlanStamp(m); state.momentByMatch[matchId] = 'initial'; save(); render(); },
     setMoment: function (matchId, momentId) { state.momentByMatch[matchId] = momentId; render(); },
     applySubTemplate: applySubTemplate,
-    setFinalPhase: function (matchId, mode) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; applyFinalPhaseMode(m, mode, false); var cfg = finalPhaseConfig(m); save(); render(); toast((m.finalPhase === 'planned' ? cfg.text + ' will be planned.' : cfg.text + ' set as live coaching.')); },
+    setFinalPhase: function (matchId, mode) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; applyFinalPhaseMode(m, mode, false); recordPlanChange(m); var cfg = finalPhaseConfig(m); save(); render(); toast((m.finalPhase === 'planned' ? cfg.text + ' will be planned.' : cfg.text + ' set as live coaching.')); },
     addWindow: addWindow,
     updateWindow: updateWindow,
     deleteWindow: deleteWindow,
@@ -3824,9 +3924,10 @@
     updateSub: updateSub,
     startSubPositionOverride: function (matchId, subId) { state.editingSubPositionId = subId; render(); },
     stopSubPositionOverride: function () { state.editingSubPositionId = null; render(); },
-    setSubTargetPosition: function (matchId, subId, position) { var match = data.matches.find(function (m) { return m.id === matchId; }); var sub = match && match.subs.find(function (s) { return s.id === subId; }); if (!sub) return; var before = lineupBeforeWindow(match, sub.windowId); var outPos = positionOfPlayer(before, sub.playerOutId); if (!validateSubChoice(match, sub, sub.playerInId, sub.playerOutId, position)) { state.editingSubPositionId = null; render(); return; } sub.position = position; sub.manualPosition = !!(outPos && position !== outPos); state.editingSubPositionId = null; save(); render(); },
+    setSubTargetPosition: function (matchId, subId, position) { var match = data.matches.find(function (m) { return m.id === matchId; }); var sub = match && match.subs.find(function (s) { return s.id === subId; }); if (!sub) return; var before = lineupBeforeWindow(match, sub.windowId); var outPos = positionOfPlayer(before, sub.playerOutId); if (!validateSubChoice(match, sub, sub.playerInId, sub.playerOutId, position)) { state.editingSubPositionId = null; render(); return; } sub.position = position; sub.manualPosition = !!(outPos && position !== outPos); state.editingSubPositionId = null; recordPlanChange(match); save(); render(); },
     deleteSub: deleteSub,
-    clearSubs: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; m.subs = []; save(); render(); },
+    clearSubs: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); if (!m) return; m.subs = []; recordPlanChange(m); save(); render(); },
+    saveMatchPlan: function () { var m = activeMatch(); if (!m) return; recordPlanChange(m); save().then(function () { render(); toast('Match plan saved. ' + planCloudHint()); }); },
     copyShareText: function (matchId) { var m = data.matches.find(function (x) { return x.id === matchId; }); var box = document.getElementById('shareText'); var text = box ? box.value : buildShareText(m); if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(function () { toast('WhatsApp text copied.'); }).catch(function () { fallbackCopy(text, 'WhatsApp text copied.'); }); } else fallbackCopy(text, 'WhatsApp text copied.'); },
     downloadShareImage: function (matchId) { shareCardBlob(function (blob) { if (!blob) return toast('Could not create image.'); var url = URL.createObjectURL(blob); var a = document.createElement('a'); a.href = url; a.download = 'match-planner-card.png'; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function () { URL.revokeObjectURL(url); }, 2000); toast('Image downloaded.'); }); },
     openShareImage: function (matchId) { var opened = window.open('', '_blank'); shareCardBlob(function (blob) { if (!blob) { if (opened) opened.close(); return toast('Could not create image.'); } var url = URL.createObjectURL(blob); if (opened) { opened.location.href = url; opened.document.title = 'Match plan image'; toast('Image opened.'); } else toast('Popup blocked. Use Download image instead.'); setTimeout(function () { URL.revokeObjectURL(url); }, 60000); }); },
